@@ -22,5 +22,5 @@ export default defineConfig({
       workbox: { navigateFallback: '/index.html', runtimeCaching: [{ urlPattern: /^\/api\//, handler: 'NetworkOnly' }] }
     })
   ],
-  server: { proxy: { '/api': 'http://localhost:8000' } }
+  server: { proxy: { '/api': 'http://127.0.0.1:8000' } }
 })
