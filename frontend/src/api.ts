@@ -8,29 +8,52 @@ export type InventoryCount = { batch_id: string; expected_quantity: string; coun
 export type InventoryDetail = { session: { id: string; location_id?: string; status: string; created_at: string }; counts: InventoryCount[] }
 export type Notification = { id: string; kind: string; message: string; read_at?: string; resolved_at?: string; created_at: string }
 
-const state = { token: localStorage.getItem('access_token') || '', household: localStorage.getItem('household_id') || '' }
+const state = { token: localStorage.getItem('access_token') || '', refresh: localStorage.getItem('refresh_token') || '', household: localStorage.getItem('household_id') || '' }
+let refreshPromise: Promise<boolean> | null = null
+
+async function renewAccessToken(): Promise<boolean> {
+  if (!state.refresh) return false
+  if (!refreshPromise) refreshPromise = fetch('/api/v1/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: state.refresh }) }).then(async response => {
+    if (!response.ok) return false
+    const tokens = await response.json(); state.token = tokens.access_token; state.refresh = tokens.refresh_token
+    localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh); return true
+  }).finally(() => { refreshPromise = null })
+  return refreshPromise
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api/v1${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(state.token && { Authorization: `Bearer ${state.token}` }), ...(state.household && { 'X-Household-ID': state.household }), ...init.headers }
   })
+  if (response.status === 401 && path !== '/auth/refresh' && await renewAccessToken()) return request<T>(path, init)
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: 'Netzwerkfehler' }))
     throw new Error(typeof body.detail === 'string' ? body.detail : body.detail?.message || 'Aktion fehlgeschlagen')
   }
+  if (response.status === 204) return undefined as T
   return response.json()
 }
 
 export const api = {
   authenticated: () => Boolean(state.token),
   async login(email: string, password: string) {
-    const tokens = await request<{ access_token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
-    state.token = tokens.access_token; localStorage.setItem('access_token', state.token)
+    const tokens = await request<{ access_token: string; refresh_token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+    state.token = tokens.access_token; state.refresh = tokens.refresh_token; localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh)
     const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
     state.household = boot.memberships[0].household_id; localStorage.setItem('household_id', state.household)
   },
-  logout() { localStorage.clear(); state.token = ''; state.household = '' },
+  async register(email: string, display_name: string, password: string, household_name: string | null, invitation_token: string | null) {
+    const tokens = await request<{ access_token: string; refresh_token: string }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, display_name, password, household_name, invitation_token }) })
+    state.token = tokens.access_token; state.refresh = tokens.refresh_token; localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh)
+    const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
+    state.household = boot.memberships[0].household_id; localStorage.setItem('household_id', state.household)
+  },
+  async logout() { if (state.refresh) await request('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: state.refresh }) }).catch(() => undefined); localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); localStorage.removeItem('household_id'); state.token = ''; state.refresh = ''; state.household = '' },
+  requestPasswordReset: (email: string) => request<{ message: string }>('/auth/password-reset/request', { method: 'POST', body: JSON.stringify({ email }) }),
+  async confirmPasswordReset(token: string, password: string) { await request<void>('/auth/password-reset/confirm', { method: 'POST', body: JSON.stringify({ token, password }) }); localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); localStorage.removeItem('household_id'); state.token = ''; state.refresh = ''; state.household = '' },
+  createInvitation: (email: string, role: string) => request<{ invitation_url: string }>('/households/invitations', { method: 'POST', body: JSON.stringify({ email: email || null, role }) }),
+  async acceptInvitation(token: string) { const accepted = await request<{ household_id: string }>('/households/invitations/accept', { method: 'POST', body: JSON.stringify({ token }) }); state.household = accepted.household_id; localStorage.setItem('household_id', state.household) },
   products: () => request<Product[]>('/products'),
   locations: () => request<Location[]>('/locations'),
   stock: () => request<Batch[]>('/stock'),

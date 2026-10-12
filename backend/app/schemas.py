@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from .models import MovementType, Role
 
@@ -17,7 +17,14 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     display_name: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=10, max_length=128)
-    household_name: str = Field(min_length=1, max_length=120)
+    household_name: str | None = Field(default=None, min_length=1, max_length=120)
+    invitation_token: str | None = None
+
+    @model_validator(mode="after")
+    def require_household_or_invitation(self) -> "RegisterRequest":
+        if not self.household_name and not self.invitation_token:
+            raise ValueError("Haushaltsname oder Einladung ist erforderlich")
+        return self
 
 
 class LoginRequest(BaseModel):
@@ -29,6 +36,43 @@ class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    password: str = Field(min_length=10, max_length=128)
+
+
+class InvitationCreate(BaseModel):
+    email: EmailStr | None = None
+    role: Role = Role.member
+
+
+class InvitationRead(BaseModel):
+    token: str
+    invitation_url: str
+    expires_at: datetime
+
+
+class InvitationAccept(BaseModel):
+    token: str
+
+
+class InvitationAccepted(BaseModel):
+    household_id: str
+    role: Role
 
 
 class UserRead(ORMModel):

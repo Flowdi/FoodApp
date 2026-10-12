@@ -8,6 +8,11 @@ type View = 'stock' | 'history' | 'inventory' | 'more'
 
 const loggedIn = ref(api.authenticated())
 const email = ref('demo@vorrat.local'), password = ref('demo-password')
+const query = new URLSearchParams(window.location.search)
+const resetToken = ref(query.get('reset_token') || '')
+const inviteToken = ref(query.get('invite') || '')
+const resetPassword = ref(''), resetComplete = ref(false), invitationLink = ref('')
+const registering = ref(false), displayName = ref(''), householdName = ref('')
 const batches = ref<Batch[]>([]), products = ref<Product[]>([]), locations = ref<Location[]>([])
 const movements = ref<Movement[]>([]), shopping = ref<ShoppingItem[]>([])
 const notifications = ref<Notification[]>([])
@@ -24,7 +29,13 @@ async function load() {
     api.stock(), api.products(), api.locations(), api.movements(), api.shoppingList(), api.notifications()
   ])
 }
-async function login() { busy.value = true; error.value = ''; try { await api.login(email.value, password.value); loggedIn.value = true; await load() } catch(e) { error.value = String((e as Error).message) } finally { busy.value = false } }
+function clearQueryToken(name: string) { const url = new URL(window.location.href); url.searchParams.delete(name); window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`) }
+async function acceptPendingInvitation() { if (!inviteToken.value) return; await api.acceptInvitation(inviteToken.value); inviteToken.value = ''; clearQueryToken('invite') }
+async function login() { busy.value = true; error.value = ''; try { await api.login(email.value, password.value); loggedIn.value = true; await acceptPendingInvitation(); await load() } catch(e) { error.value = String((e as Error).message) } finally { busy.value = false } }
+async function register() { busy.value = true; error.value = ''; try { await api.register(email.value, displayName.value, password.value, inviteToken.value ? null : householdName.value, inviteToken.value || null); if (inviteToken.value) { inviteToken.value = ''; clearQueryToken('invite') } loggedIn.value = true; await load() } catch(e) { error.value = String((e as Error).message) } finally { busy.value = false } }
+async function requestReset() { const address = prompt('Für welche E-Mail-Adresse soll ein Reset-Link versendet werden?', email.value); if (!address) return; try { const result = await api.requestPasswordReset(address); alert(result.message) } catch(e) { error.value = (e as Error).message } }
+async function completeReset() { busy.value = true; error.value = ''; try { await api.confirmPasswordReset(resetToken.value, resetPassword.value); loggedIn.value = false; resetComplete.value = true; resetToken.value = ''; clearQueryToken('reset_token') } catch(e) { error.value = (e as Error).message } finally { busy.value = false } }
+async function createInvitation() { const address = prompt('E-Mail-Adresse der eingeladenen Person (optional)', '') ?? ''; const role = prompt('Rolle: admin, member oder viewer', 'member'); if (!role) return; try { const result = await api.createInvitation(address, role); invitationLink.value = result.invitation_url } catch(e) { error.value = (e as Error).message } }
 async function add() { busy.value = true; error.value = ''; try { const result = await api.purchase({ product_id: selectedProduct.value, location_id: selectedLocation.value, quantity: quantity.value, unit: unit.value, best_before: bestBefore.value || null, idempotency_key: crypto.randomUUID(), client_info: navigator.userAgent }); remember(result.movement.id, result.batch.version); showAdd.value = false; await load() } catch(e) { error.value = (e as Error).message } finally { busy.value = false } }
 function remember(id: string, version: number) { lastMovement.value = { id, version }; setTimeout(() => lastMovement.value = null, 10000) }
 async function consume(batch: Batch) { const amount = Number(prompt(`Wie viel ${batch.unit} entnehmen?`, '1')); if (!amount) return; try { const result = await api.consume(batch, amount); remember(result.movement.id, result.batch.version); await load() } catch(e) { error.value = (e as Error).message; await load() } }
@@ -37,16 +48,25 @@ async function readWarning(notification: Notification) { if (notification.read_a
 async function startInventory() { try { inventory.value = await api.startInventory(selectedLocation.value || undefined); activeView.value = 'inventory' } catch(e) { error.value = (e as Error).message } }
 async function saveCount(batchId: string, event: Event) { if (!inventory.value) return; const value = Number((event.target as HTMLInputElement).value); try { await api.recordCount(inventory.value.session.id, batchId, value); const count = inventory.value.counts.find(item => item.batch_id === batchId); if (count) count.counted_quantity = String(value) } catch(e) { error.value = (e as Error).message } }
 async function confirmInventory() { if (!inventory.value || !confirm('Abweichungen jetzt als Korrekturbuchungen übernehmen?')) return; try { await api.confirmInventory(inventory.value.session.id); inventory.value = null; await load(); activeView.value = 'stock' } catch(e) { error.value = (e as Error).message } }
-function logout() { api.logout(); window.location.reload() }
+async function logout() { await api.logout(); window.location.reload() }
 async function scan() { scanning.value = true; error.value = ''; await new Promise(resolve => setTimeout(resolve)); const reader = new BrowserMultiFormatReader(); try { const result = await reader.decodeOnceFromVideoDevice(undefined, 'scanner'); let product: Product; try { product = await api.barcode(result.getText()) } catch { const found = await api.lookup(result.getText()); product = await api.createProduct({ name: found.name || `Artikel ${result.getText()}`, brand: found.brand, image_url: found.image_url, default_unit: 'piece', barcodes: [result.getText()] }) } selectedProduct.value = product.id; unit.value = product.default_unit; showAdd.value = true } catch { error.value = 'Scanner konnte nicht gestartet werden. Bitte Barcode manuell suchen.' } finally { const video = document.querySelector<HTMLVideoElement>('#scanner'); if (video?.srcObject instanceof MediaStream) video.srcObject.getTracks().forEach(track => track.stop()); scanning.value = false } }
-onMounted(() => { if (loggedIn.value) load().catch(e => error.value = e.message) })
+onMounted(async () => { if (loggedIn.value) { try { await acceptPendingInvitation(); await load() } catch(e) { error.value = (e as Error).message } } })
 </script>
 
 <template>
-  <main v-if="!loggedIn" class="login-shell">
+  <main v-if="resetToken" class="login-shell">
+    <section class="login-card">
+      <div class="brand-mark">V</div><p class="eyebrow">KONTO SCHÜTZEN</p><h1>Neues Passwort</h1><p class="muted">Vergib ein neues Passwort mit mindestens zehn Zeichen.</p>
+      <form @submit.prevent="completeReset"><label>Neues Passwort<input v-model="resetPassword" type="password" minlength="10" autocomplete="new-password" required></label><p v-if="error" class="error">{{ error }}</p><button class="primary" :disabled="busy">Passwort speichern</button></form>
+    </section>
+  </main>
+
+  <main v-else-if="!loggedIn" class="login-shell">
     <section class="login-card">
       <div class="brand-mark">V</div><p class="eyebrow">ZUHAUSE GUT VERSORGT</p><h1>Vorrat</h1><p class="muted">Lebensmittel gemeinsam im Blick behalten.</p>
-      <form @submit.prevent="login"><label>E-Mail<input v-model="email" type="email" autocomplete="email" required></label><label>Passwort<input v-model="password" type="password" autocomplete="current-password" required></label><p v-if="error" class="error">{{ error }}</p><button class="primary" :disabled="busy">Anmelden</button></form>
+      <p v-if="resetComplete" class="success">Das Passwort wurde geändert. Du kannst dich jetzt anmelden.</p>
+      <p v-if="inviteToken" class="invite-note">Melde dich an oder erstelle ein Konto, um die Haushaltseinladung anzunehmen.</p>
+      <form @submit.prevent="registering ? register() : login()"><label v-if="registering">Name<input v-model="displayName" autocomplete="name" required></label><label>E-Mail<input v-model="email" type="email" autocomplete="email" required></label><label>Passwort<input v-model="password" type="password" :autocomplete="registering ? 'new-password' : 'current-password'" :minlength="registering ? 10 : undefined" required></label><label v-if="registering && !inviteToken">Name des Haushalts<input v-model="householdName" required></label><p v-if="error" class="error">{{ error }}</p><button class="primary" :disabled="busy">{{ registering ? 'Konto erstellen' : 'Anmelden' }}</button><button type="button" class="link-button" @click="registering = !registering; error = ''">{{ registering ? 'Schon registriert? Anmelden' : 'Noch kein Konto? Registrieren' }}</button><button v-if="!registering" type="button" class="link-button" @click="requestReset">Passwort vergessen?</button></form>
     </section>
   </main>
 
@@ -74,7 +94,7 @@ onMounted(() => { if (loggedIn.value) load().catch(e => error.value = e.message)
     </template>
 
     <template v-else>
-      <section class="settings-list"><div class="section-heading"><div><p class="eyebrow">WARNUNGEN</p><h2>Hinweise</h2></div><button @click="checkWarnings">Jetzt prüfen</button></div><article v-for="notification in notifications" :key="notification.id" :class="{unread: !notification.read_at}" @click="readWarning(notification)"><div><strong>{{ notification.kind === 'low_stock' ? 'Mindestbestand' : 'MHD' }}</strong><small>{{ notification.message }}</small></div><span>{{ notification.read_at ? '✓' : 'Neu' }}</span></article><p v-if="!notifications.length" class="muted no-warnings">Keine aktuellen Warnungen.</p><p class="muted products-intro">Produkte und Mindestbestände verwalten. Änderungen werden im Audit-Log gespeichert.</p><article v-for="product in products" :key="product.id"><div><strong>{{ product.name }}</strong><small>{{ product.brand || product.category || product.default_unit }}</small></div><div><button @click="configureMinimum(product)">Minimum</button><button @click="editProduct(product)">Bearbeiten</button></div></article></section>
+      <section class="settings-list"><div class="section-heading"><div><p class="eyebrow">HAUSHALT</p><h2>Mitglieder einladen</h2></div><button @click="createInvitation">Einladung erstellen</button></div><div v-if="invitationLink" class="invitation-result"><strong>Einladungslink</strong><input :value="invitationLink" readonly @focus="($event.target as HTMLInputElement).select()"><small>Der Link ist sieben Tage gültig und wird nur hier vollständig angezeigt.</small></div><div class="section-heading warnings-heading"><div><p class="eyebrow">WARNUNGEN</p><h2>Hinweise</h2></div><button @click="checkWarnings">Jetzt prüfen</button></div><article v-for="notification in notifications" :key="notification.id" :class="{unread: !notification.read_at}" @click="readWarning(notification)"><div><strong>{{ notification.kind === 'low_stock' ? 'Mindestbestand' : 'MHD' }}</strong><small>{{ notification.message }}</small></div><span>{{ notification.read_at ? '✓' : 'Neu' }}</span></article><p v-if="!notifications.length" class="muted no-warnings">Keine aktuellen Warnungen.</p><p class="muted products-intro">Produkte und Mindestbestände verwalten. Änderungen werden im Audit-Log gespeichert.</p><article v-for="product in products" :key="product.id"><div><strong>{{ product.name }}</strong><small>{{ product.brand || product.category || product.default_unit }}</small></div><div><button @click="configureMinimum(product)">Minimum</button><button @click="editProduct(product)">Bearbeiten</button></div></article></section>
     </template>
 
     <nav><button :class="{active:activeView==='stock'}" @click="activeView='stock'">⌂<span>Vorrat</span></button><button :class="{active:activeView==='history'}" @click="activeView='history'">≡<span>Verlauf</span></button><button :class="{active:activeView==='inventory'}" @click="activeView='inventory'">✓<span>Inventur</span></button><button :class="{active:activeView==='more'}" @click="activeView='more'">⚙<span>Mehr</span></button></nav>

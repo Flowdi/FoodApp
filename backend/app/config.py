@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     vapid_private_key: str = ""
     vapid_public_key: str = ""
     vapid_subject: str = "mailto:admin@example.invalid"
+    public_url: str = "https://localhost"
+    login_rate_limit_attempts: int = 5
+    login_rate_limit_window_seconds: int = 300
 
     @field_validator("cors_origins", mode="before")
     @classmethod

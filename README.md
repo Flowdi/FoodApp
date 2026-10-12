@@ -2,11 +2,13 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Meilenstein 2 – Haushaltsworkflows
+## Stand: Meilenstein 3 – Kontosicherheit und Zusammenarbeit
 
 Enthalten sind:
 
-- Registrierung/Login mit Argon2-Passwort-Hash, JWT-Zugriffstoken und serverseitig speicherbaren Refresh-Tokens
+- Registrierung/Login mit Argon2-Passwort-Hash, kurzlebigem JWT-Zugriffstoken sowie rotierenden und widerrufbaren Refresh-Tokens
+- Login-Rate-Limit, serverseitiger Logout und einmalige Passwort-Reset-Links per SMTP
+- Haushaltseinladungen für `admin`, `member` und `viewer`, optional an eine feste E-Mail gebunden
 - Haushalts- und Rollenmodell (`owner`, `admin`, `member`, `viewer`) mit mandantensicherer API
 - Produkte mit mehreren Barcodes, Lagerorte und Chargen
 - transaktionales Buchungsjournal für Einkauf, Entnahme, Entsorgung und Storno
@@ -23,7 +25,7 @@ Enthalten sind:
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
 
-Noch nicht als fertiger Workflow enthalten sind Einladungen/Passwort-Reset, Refresh-Token-Rotation, FEFO-Entnahme über mehrere Chargen, Live-Events und die vollständige Offline-Konfliktoberfläche. Diese Punkte sollten vor einem öffentlichen Produktivbetrieb abgeschlossen werden.
+Noch nicht als fertiger Workflow enthalten sind E-Mail-Verifikation, FEFO-Entnahme über mehrere Chargen, Live-Events und die vollständige Offline-Konfliktoberfläche. Diese Punkte sollten vor einem öffentlichen Produktivbetrieb abgeschlossen werden.
 
 ## Architektur
 
@@ -104,15 +106,17 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 - `.env` wird ignoriert; Secrets gehören weder ins Image noch ins Repository.
 - `CORS_ORIGINS` auf die echte HTTPS-Origin beschränken.
 - Die Kamera und Web Push funktionieren außerhalb von `localhost` nur in einem sicheren HTTPS-Kontext.
-- Vor öffentlichem Betrieb müssen Login-Rate-Limiting, Refresh-/Logout-Endpunkte, Passwort-Reset und E-Mail-Verifikation aus Meilenstein 2 abgeschlossen sein.
+- `PUBLIC_URL` muss auf die öffentlich erreichbare HTTPS-Adresse zeigen, damit Passwort-Reset- und Einladungslinks funktionieren.
+- Vor öffentlichem Betrieb sollte zusätzlich eine E-Mail-Verifikation ergänzt werden.
 - Open Food Facts verlangt einen identifizierenden `User-Agent`; `OPEN_FOOD_FACTS_USER_AGENT` entsprechend anpassen.
 
 ## Meilensteine
 
 1. **Kern (abgeschlossen):** Domänenmodell, Auth-Grundlage, Journal, Idempotenz, Locking, Barcode-PWA, Deployment und kritische Tests.
-2. **Haushaltsworkflows (weitgehend abgeschlossen):** Produktbearbeitung/Audit, Umlagerung, Inventur, Verlauf/CSV, Mindestbestand/Einkaufsliste, Scheduler sowie Push/E-Mail. Offen sind Einladungen, Passwort-Reset, FEFO über mehrere Chargen und SSE.
-3. **Offline & Härtung:** vollständige Outbox-Synchronisation mit Konfliktcenter, Refresh-Rotation, Login-Rate-Limit, E2E-Tests, Observability und belastbarer Backup-Restore-Test.
-4. **Phase 2 (nur Roadmap):** Rezeptbibliothek. Ein deterministisches Python-Pre-Scoring bewertet Verfügbarkeit und MHD-Dringlichkeit; ein austauschbares `RecipeRanker`-Interface erlaubt OpenAI, Anthropic oder Ollama ausschließlich über Umgebungsvariablen. Fehlende Zutaten fließen in die Einkaufsliste. Das Schema und `backend/app/units.py` sind vorbereitet, es gibt noch keine Rezept-UI und keine KI-Anbindung.
+2. **Haushaltsworkflows (abgeschlossen):** Produktbearbeitung/Audit, Umlagerung, Inventur, Verlauf/CSV, Mindestbestand/Einkaufsliste, Scheduler sowie Push/E-Mail.
+3. **Kontosicherheit & Zusammenarbeit (weitgehend abgeschlossen):** Refresh-Rotation, Logout, Login-Rate-Limit, Passwort-Reset und Haushaltseinladungen. Offen sind E-Mail-Verifikation, FEFO über mehrere Chargen und SSE.
+4. **Offline & Härtung:** vollständige Outbox-Synchronisation mit Konfliktcenter, E2E-Tests, Observability und belastbarer Backup-Restore-Test.
+5. **Phase 2 (nur Roadmap):** Rezeptbibliothek. Ein deterministisches Python-Pre-Scoring bewertet Verfügbarkeit und MHD-Dringlichkeit; ein austauschbares `RecipeRanker`-Interface erlaubt OpenAI, Anthropic oder Ollama ausschließlich über Umgebungsvariablen. Fehlende Zutaten fließen in die Einkaufsliste. Das Schema und `backend/app/units.py` sind vorbereitet, es gibt noch keine Rezept-UI und keine KI-Anbindung.
 
 ## Lizenz
 
