@@ -29,7 +29,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 401 && path !== '/auth/refresh' && await renewAccessToken()) return request<T>(path, init)
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: 'Netzwerkfehler' }))
-    throw new Error(typeof body.detail === 'string' ? body.detail : body.detail?.message || 'Aktion fehlgeschlagen')
+    const detail = body.detail
+    const message = typeof detail === 'string'
+      ? detail
+      : Array.isArray(detail)
+        ? detail.map(item => item.msg).join('; ')
+        : detail?.message
+    throw new Error(message || 'Aktion fehlgeschlagen')
   }
   if (response.status === 204) return undefined as T
   return response.json()

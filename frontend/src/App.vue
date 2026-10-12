@@ -7,7 +7,7 @@ import { t } from './i18n'
 type View = 'stock' | 'history' | 'inventory' | 'more'
 
 const loggedIn = ref(api.authenticated())
-const email = ref('demo@vorrat.local'), password = ref('demo-password')
+const email = ref('demo@example.com'), password = ref('demo-password')
 const query = new URLSearchParams(window.location.search)
 const resetToken = ref(query.get('reset_token') || '')
 const inviteToken = ref(query.get('invite') || '')

@@ -7,10 +7,15 @@ from .security import hash_password
 
 def seed() -> None:
     with SessionLocal() as db:
-        if db.scalar(select(User).where(User.email == "demo@vorrat.local")):
+        if db.scalar(select(User).where(User.email == "demo@example.com")):
+            return
+        legacy_user = db.scalar(select(User).where(User.email == "demo@vorrat.local"))
+        if legacy_user:
+            legacy_user.email = "demo@example.com"
+            db.commit()
             return
         user = User(
-            email="demo@vorrat.local",
+            email="demo@example.com",
             display_name="Demo",
             password_hash=hash_password("demo-password"),
         )

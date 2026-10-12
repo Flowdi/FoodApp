@@ -53,7 +53,7 @@ docker compose exec api python -m backend.app.seed
 
 Danach: `https://localhost` und `https://localhost/docs`. Caddys lokale CA muss auf Testgeräten einmal als vertrauenswürdig installiert werden; im Internet beschafft Caddy für eine echte `DOMAIN` automatisch ein Zertifikat.
 
-Demo-Zugang nach dem Seed: `demo@vorrat.local` / `demo-password`. Diesen Account nie unverändert öffentlich bereitstellen.
+Demo-Zugang nach dem Seed: `demo@example.com` / `demo-password`. Diesen Account nie unverändert öffentlich bereitstellen.
 
 ## Lokale Entwicklung
 
