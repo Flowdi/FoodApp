@@ -2,7 +2,7 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Meilenstein 1 – belastbarer Kern
+## Stand: Meilenstein 2 – Haushaltsworkflows
 
 Enthalten sind:
 
@@ -14,10 +14,16 @@ Enthalten sind:
 - Browser-Barcode-Scan (EAN/UPC via ZXing), manueller Fallback und Open-Food-Facts-Lookup
 - installierbare Vue-3-PWA in deutscher, i18n-fähiger Oberfläche; responsiv und mit Dark Mode
 - Offline-Outbox auf IndexedDB-Basis (technische Basis; Konfliktoberfläche wird in Meilenstein 3 vervollständigt)
+- Produkt- und Chargenbearbeitung mit serverseitiger Rollenprüfung und Audit-Log
+- Umlagerungen als zwei ausgeglichene, idempotente Journalbuchungen
+- Inventur für Haushalt oder Lagerort mit Soll/Ist-Abgleich und `adjust`-Buchungen
+- filterbarer Buchungsverlauf und Excel-kompatibler UTF-8-CSV-Export
+- Mindestbestände, automatisch abgeleitete Einkaufsliste und entprellte Warnungen
+- täglicher MHD-/Mindestbestand-Job sowie In-App-, SMTP- und Web-Push-Versand
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
 
-Noch nicht als fertiger Workflow enthalten sind Einladungen/Passwort-Reset, vollständige Inventur, Umlagerung, CSV-Export, Push/E-Mail-Versand, Einkaufsliste, Live-Events und Produktbearbeitung. Diese sind unten bewusst als weitere Meilensteine ausgewiesen und sollten nicht als produktionsfertig betrachtet werden.
+Noch nicht als fertiger Workflow enthalten sind Einladungen/Passwort-Reset, Refresh-Token-Rotation, FEFO-Entnahme über mehrere Chargen, Live-Events und die vollständige Offline-Konfliktoberfläche. Diese Punkte sollten vor einem öffentlichen Produktivbetrieb abgeschlossen werden.
 
 ## Architektur
 
@@ -103,8 +109,8 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 
 ## Meilensteine
 
-1. **Kern (dieser Stand):** Domänenmodell, Auth-Grundlage, Journal, Idempotenz, Locking, Barcode-PWA, Deployment und kritische Tests.
-2. **Funktionsumfang Phase 1:** Einladungen, Passwort-Reset, Produktbearbeitung/Audit, FEFO über mehrere Chargen, Umlagerung, Inventur, Verlauf/CSV, Mindestbestand/Einkaufsliste, Scheduler, Push/E-Mail und SSE.
+1. **Kern (abgeschlossen):** Domänenmodell, Auth-Grundlage, Journal, Idempotenz, Locking, Barcode-PWA, Deployment und kritische Tests.
+2. **Haushaltsworkflows (weitgehend abgeschlossen):** Produktbearbeitung/Audit, Umlagerung, Inventur, Verlauf/CSV, Mindestbestand/Einkaufsliste, Scheduler sowie Push/E-Mail. Offen sind Einladungen, Passwort-Reset, FEFO über mehrere Chargen und SSE.
 3. **Offline & Härtung:** vollständige Outbox-Synchronisation mit Konfliktcenter, Refresh-Rotation, Login-Rate-Limit, E2E-Tests, Observability und belastbarer Backup-Restore-Test.
 4. **Phase 2 (nur Roadmap):** Rezeptbibliothek. Ein deterministisches Python-Pre-Scoring bewertet Verfügbarkeit und MHD-Dringlichkeit; ein austauschbares `RecipeRanker`-Interface erlaubt OpenAI, Anthropic oder Ollama ausschließlich über Umgebungsvariablen. Fehlende Zutaten fließen in die Einkaufsliste. Das Schema und `backend/app/units.py` sind vorbereitet, es gibt noch keine Rezept-UI und keine KI-Anbindung.
 

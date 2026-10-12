@@ -1,11 +1,27 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import auth, inventory
+from .jobs import create_scheduler
+from .routers import auth, catalog, inventory, inventory_sessions, notifications
 
 settings = get_settings()
-app = FastAPI(title="Vorrat API", version="0.1.0", docs_url="/docs")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    scheduler = create_scheduler()
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="Vorrat API", version="0.2.0", docs_url="/docs", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -15,6 +31,9 @@ app.add_middleware(
 )
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(inventory.router, prefix="/api/v1")
+app.include_router(catalog.router, prefix="/api/v1")
+app.include_router(inventory_sessions.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")
 
 
 @app.get("/healthz", include_in_schema=False)

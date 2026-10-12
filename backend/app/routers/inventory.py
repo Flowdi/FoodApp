@@ -1,9 +1,14 @@
+import csv
+import io
+from datetime import datetime
 from decimal import Decimal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.sql import Select
 
 from ..config import get_settings
 from ..database import get_db
@@ -16,6 +21,7 @@ from ..models import (
     StockBatch,
     StockMovement,
     StorageLocation,
+    User,
 )
 from ..schemas import (
     BatchRead,
@@ -28,8 +34,9 @@ from ..schemas import (
     ProductRead,
     PurchaseRequest,
     ReversalRequest,
+    TransferRequest,
 )
-from ..services.stock import apply_delta, existing_result, reverse_movement
+from ..services.stock import apply_delta, existing_result, reverse_movement, transfer_stock
 
 router = APIRouter(tags=["inventory"])
 
@@ -187,6 +194,34 @@ def purchase(
     )
 
 
+@router.post("/stock/transfer", response_model=list[MovementResult])
+def transfer(
+    payload: TransferRequest,
+    context: HouseholdContext = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> list[MovementResult]:
+    location = db.scalar(
+        select(StorageLocation).where(
+            StorageLocation.id == payload.target_location_id,
+            StorageLocation.household_id == context.membership.household_id,
+        )
+    )
+    if location is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ziellagerort nicht gefunden")
+    return transfer_stock(
+        db,
+        household_id=context.membership.household_id,
+        batch_id=payload.batch_id,
+        target_location_id=payload.target_location_id,
+        quantity=payload.quantity,
+        expected_version=payload.expected_version,
+        idempotency_key=payload.idempotency_key,
+        user_id=context.user.id,
+        note=payload.note,
+        client_info=payload.client_info,
+    )
+
+
 @router.post("/stock/{batch_id}/{action}", response_model=MovementResult)
 def change_stock(
     batch_id: str,
@@ -219,6 +254,80 @@ def change_stock(
     )
 
 
+def movement_query(
+    household_id: str,
+    user_id: str | None,
+    product_id: str | None,
+    movement_type: MovementType | None,
+    start: datetime | None,
+    end: datetime | None,
+) -> Select[tuple[StockMovement]]:
+    stmt = select(StockMovement).where(StockMovement.household_id == household_id)
+    if product_id:
+        stmt = stmt.where(
+            StockMovement.batch_id.in_(
+                select(StockBatch.id).where(StockBatch.product_id == product_id)
+            )
+        )
+    if user_id:
+        stmt = stmt.where(StockMovement.user_id == user_id)
+    if movement_type:
+        stmt = stmt.where(StockMovement.movement_type == movement_type)
+    if start:
+        stmt = stmt.where(StockMovement.created_at >= start)
+    if end:
+        stmt = stmt.where(StockMovement.created_at <= end)
+    return stmt
+
+
+@router.get("/movements/export.csv")
+def export_movements(
+    user_id: str | None = None,
+    product_id: str | None = None,
+    movement_type: MovementType | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    context: HouseholdContext = Depends(household_context),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    stmt = (
+        movement_query(
+            context.membership.household_id,
+            user_id,
+            product_id,
+            movement_type,
+            start,
+            end,
+        )
+        .join(StockBatch, StockBatch.id == StockMovement.batch_id)
+        .join(Product, Product.id == StockBatch.product_id)
+        .join(User, User.id == StockMovement.user_id)
+        .with_only_columns(StockMovement, Product.name, User.display_name)
+        .order_by(StockMovement.created_at.desc())
+    )
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Zeitpunkt", "Nutzer", "Produkt", "Typ", "Menge", "Notiz", "Gerät"])
+    for movement, product_name, display_name in db.execute(stmt):
+        writer.writerow(
+            [
+                movement.created_at.isoformat(),
+                display_name,
+                product_name,
+                movement.movement_type.value,
+                movement.quantity_delta,
+                movement.note or "",
+                movement.client_info or "",
+            ]
+        )
+    payload = output.getvalue().encode("utf-8-sig")
+    return StreamingResponse(
+        iter([payload]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="vorrat-buchungen.csv"'},
+    )
+
+
 @router.post("/movements/{movement_id}/reverse", response_model=MovementResult)
 def reverse(
     movement_id: str,
@@ -240,13 +349,24 @@ def reverse(
 @router.get("/movements", response_model=list[MovementRead])
 def movements(
     limit: int = Query(100, ge=1, le=500),
+    user_id: str | None = None,
+    product_id: str | None = None,
+    movement_type: MovementType | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     context: HouseholdContext = Depends(household_context),
     db: Session = Depends(get_db),
 ) -> list[StockMovement]:
     return list(
         db.scalars(
-            select(StockMovement)
-            .where(StockMovement.household_id == context.membership.household_id)
+            movement_query(
+                context.membership.household_id,
+                user_id,
+                product_id,
+                movement_type,
+                start,
+                end,
+            )
             .order_by(StockMovement.created_at.desc())
             .limit(limit)
         )

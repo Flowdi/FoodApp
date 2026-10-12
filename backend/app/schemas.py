@@ -52,6 +52,16 @@ class ProductCreate(BaseModel):
     barcodes: list[str] = []
 
 
+class ProductUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=180)
+    brand: str | None = None
+    category: str | None = None
+    default_unit: str | None = None
+    image_url: str | None = None
+    notes: str | None = None
+    barcodes: list[str] | None = None
+
+
 class ProductRead(ORMModel):
     id: str
     household_id: str
@@ -96,6 +106,94 @@ class ChangeStockRequest(BaseModel):
     client_info: str | None = None
 
 
+class BatchUpdate(BaseModel):
+    location_id: str | None = None
+    best_before: date | None = None
+    opened_at: date | None = None
+    unit: str | None = None
+    expected_version: int = Field(ge=1)
+
+
+class TransferRequest(BaseModel):
+    batch_id: str
+    target_location_id: str
+    quantity: Quantity
+    expected_version: int = Field(ge=1)
+    idempotency_key: str
+    note: str | None = None
+    client_info: str | None = None
+
+
+class MinStockRuleWrite(BaseModel):
+    minimum_quantity: Quantity
+    unit: str
+    active: bool = True
+
+
+class MinStockRuleRead(ORMModel):
+    id: str
+    product_id: str
+    minimum_quantity: Decimal
+    unit: str
+    active: bool
+
+
+class ShoppingListItem(BaseModel):
+    product_id: str
+    product_name: str
+    current_quantity: Decimal
+    minimum_quantity: Decimal
+    missing_quantity: Decimal
+    unit: str
+
+
+class InventoryStartRequest(BaseModel):
+    location_id: str | None = None
+
+
+class InventorySessionRead(ORMModel):
+    id: str
+    location_id: str | None
+    status: str
+    created_at: datetime
+
+
+class InventoryCountWrite(BaseModel):
+    batch_id: str
+    counted_quantity: Decimal = Field(ge=0, decimal_places=3)
+
+
+class InventoryCountRead(ORMModel):
+    batch_id: str
+    expected_quantity: Decimal
+    counted_quantity: Decimal
+
+
+class InventoryConfirmRequest(BaseModel):
+    idempotency_key: str
+
+
+class InventoryDetail(BaseModel):
+    session: InventorySessionRead
+    counts: list[InventoryCountRead]
+
+
+class NotificationRead(ORMModel):
+    id: str
+    kind: str
+    message: str
+    sent_channels: list[str]
+    read_at: datetime | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+
+class PushSubscriptionWrite(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
+
+
 class ReversalRequest(BaseModel):
     idempotency_key: str
     expected_version: int = Field(ge=1)
@@ -109,6 +207,8 @@ class MovementRead(ORMModel):
     movement_type: MovementType
     quantity_delta: Decimal
     idempotency_key: str
+    note: str | None
+    client_info: str | None
     reverses_movement_id: str | None
     created_at: datetime
 

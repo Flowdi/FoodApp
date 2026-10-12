@@ -57,3 +57,11 @@ def require_writer(
     if context.membership.role == Role.viewer:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Nur Lesezugriff")
     return context
+
+
+def require_admin(
+    context: HouseholdContext = Depends(household_context),
+) -> HouseholdContext:
+    if context.membership.role not in {Role.owner, Role.admin}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Administratorrechte erforderlich")
+    return context

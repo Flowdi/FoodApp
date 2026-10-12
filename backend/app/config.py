@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     refresh_token_days: int = 30
     cors_origins: list[str] = ["http://localhost:5173"]
     open_food_facts_user_agent: str = "Vorrat/0.1 (admin@example.invalid)"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "vorrat@example.invalid"
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_subject: str = "mailto:admin@example.invalid"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
