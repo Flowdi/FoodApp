@@ -2,43 +2,47 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Meilenstein 3 – Kontosicherheit und Zusammenarbeit
+## Stand: Phase 1 funktionsvollständig
 
 Enthalten sind:
 
 - Registrierung/Login mit Argon2-Passwort-Hash, kurzlebigem JWT-Zugriffstoken sowie rotierenden und widerrufbaren Refresh-Tokens
 - Login-Rate-Limit, serverseitiger Logout und einmalige Passwort-Reset-Links per SMTP
 - Haushaltseinladungen für `admin`, `member` und `viewer`, optional an eine feste E-Mail gebunden
-- Haushalts- und Rollenmodell (`owner`, `admin`, `member`, `viewer`) mit mandantensicherer API
+- Haushalts-, Mitglieder- und Rollenverwaltung (`owner`, `admin`, `member`, `viewer`) mit mandantensicherer API
 - Produkte mit mehreren Barcodes, Lagerorte und Chargen
 - transaktionales Buchungsjournal für Einkauf, Entnahme, Entsorgung und Storno
 - Idempotency-Key je Schreibvorgang, pessimistische Zeilensperre plus Optimistic Locking (`version`)
-- Browser-Barcode-Scan (EAN/UPC via ZXing), manueller Fallback und Open-Food-Facts-Lookup
+- Browser-Barcode-Scan (EAN/UPC via ZXing), manueller Fallback und haushaltsbezogen gecachter Open-Food-Facts-Lookup
 - installierbare Vue-3-PWA in deutscher, i18n-fähiger Oberfläche; responsiv und mit Dark Mode
-- Offline-Outbox auf IndexedDB-Basis (technische Basis; Konfliktoberfläche wird in Meilenstein 3 vervollständigt)
+- vollständige IndexedDB-Outbox mit automatischem Reconnect-Versand und Konfliktcenter
+- geräteübergreifende Live-Aktualisierung über authentifizierte Server-Sent Events
+- automatische FEFO-Entnahme über mehrere Chargen in einer DB-Transaktion
 - Produkt- und Chargenbearbeitung mit serverseitiger Rollenprüfung und Audit-Log
 - Umlagerungen als zwei ausgeglichene, idempotente Journalbuchungen
 - Inventur für Haushalt oder Lagerort mit Soll/Ist-Abgleich und `adjust`-Buchungen
-- filterbarer Buchungsverlauf und Excel-kompatibler UTF-8-CSV-Export
+- filterbarer Buchungsverlauf inklusive Nutzer/Gerät und Excel-kompatibler UTF-8-CSV-Export
 - Mindestbestände, automatisch abgeleitete Einkaufsliste und entprellte Warnungen
-- täglicher MHD-/Mindestbestand-Job sowie In-App-, SMTP- und Web-Push-Versand
+- täglicher MHD-/Mindestbestand-Job sowie individuell konfigurierbarer In-App-, SMTP- und Web-Push-Versand
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
 
-Noch nicht als fertiger Workflow enthalten sind E-Mail-Verifikation, FEFO-Entnahme über mehrere Chargen, Live-Events und die vollständige Offline-Konfliktoberfläche. Diese Punkte sollten vor einem öffentlichen Produktivbetrieb abgeschlossen werden.
+Damit ist der im Auftrag definierte Funktionsumfang von Phase 1 umgesetzt. Phase 2 bleibt bewusst auf Schema, Einheitenmodul und Roadmap beschränkt. Zusätzliche Härtung wie E-Mail-Verifikation, zentralisiertes Monitoring und regelmäßige automatisierte Restore-Proben ist vor einem öffentlichen Betrieb weiterhin empfehlenswert.
 
 ## Architektur
 
 ```text
-Vue-PWA ── HTTPS/REST ── Caddy ── FastAPI ── SQLAlchemy ── PostgreSQL
-   │                                  │
-   └─ IndexedDB-Outbox                ├─ stock_batches (aktueller Stand)
-                                      └─ stock_movements (unveränderliches Journal)
+Vue-PWA ── HTTPS/REST + SSE ── Caddy ── FastAPI ── SQLAlchemy ── PostgreSQL
+   │                                         │
+   └─ IndexedDB-Outbox + Konfliktcenter      ├─ stock_batches (aktueller Stand)
+                                             └─ stock_movements (unveränderliches Journal)
 ```
 
 Das Frontend nutzt Vue 3 + Vite, weil Komponenten, TypeScript und ein robuster Service Worker bei überschaubarer Bundle-Größe zusammenkommen. Gegenüber HTMX ist die lokale Offline-Outbox und Kamera-Lebenszyklusverwaltung klarer gekapselt. Die REST-API bleibt unabhängig vom Frontend nutzbar und ist unter `/docs` dokumentiert.
 
-Eine Buchung sperrt die Charge in PostgreSQL mit `SELECT … FOR UPDATE`, prüft deren Version und aktualisiert Bestand und Journal in derselben Transaktion. Ein innerhalb eines Haushalts eindeutiger Idempotency-Key macht Wiederholungen sicher. Stornos sind Gegenbuchungen; die Ursprungsbuchung bleibt erhalten.
+Eine Buchung sperrt die Charge in PostgreSQL mit `SELECT … FOR UPDATE`, prüft deren Version und aktualisiert Bestand und Journal in derselben Transaktion. Ein innerhalb eines Haushalts eindeutiger Idempotency-Key macht Wiederholungen sicher. FEFO-Anfragen sperren alle betroffenen Chargen und buchen vom frühesten MHD aufwärts. Stornos sind Gegenbuchungen; die Ursprungsbuchung bleibt erhalten.
+
+Offline erfasste Bestandsaktionen behalten ihren UUID-Key in IndexedDB. Beim Reconnect werden sie automatisch übertragen. Fachliche Konflikte werden nicht verworfen, sondern im Bereich **Mehr → Offline-Synchronisation** zur erneuten Prüfung oder zum bewussten Verwerfen angezeigt.
 
 ## Schnellstart mit Docker
 
@@ -75,7 +79,7 @@ npm install
 npm run dev
 ```
 
-Die Vite-Entwicklung leitet `/api` an `localhost:8000` weiter.
+Die Vite-Entwicklung leitet `/api` an `127.0.0.1:8000` weiter.
 
 ## Tests und Qualität
 
@@ -108,14 +112,15 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 - Die Kamera und Web Push funktionieren außerhalb von `localhost` nur in einem sicheren HTTPS-Kontext.
 - `PUBLIC_URL` muss auf die öffentlich erreichbare HTTPS-Adresse zeigen, damit Passwort-Reset- und Einladungslinks funktionieren.
 - Vor öffentlichem Betrieb sollte zusätzlich eine E-Mail-Verifikation ergänzt werden.
+- Für Web Push müssen `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY` und `VAPID_SUBJECT` gesetzt sein. Nutzer aktivieren den Kanal anschließend in den Einstellungen der PWA.
 - Open Food Facts verlangt einen identifizierenden `User-Agent`; `OPEN_FOOD_FACTS_USER_AGENT` entsprechend anpassen.
 
 ## Meilensteine
 
 1. **Kern (abgeschlossen):** Domänenmodell, Auth-Grundlage, Journal, Idempotenz, Locking, Barcode-PWA, Deployment und kritische Tests.
 2. **Haushaltsworkflows (abgeschlossen):** Produktbearbeitung/Audit, Umlagerung, Inventur, Verlauf/CSV, Mindestbestand/Einkaufsliste, Scheduler sowie Push/E-Mail.
-3. **Kontosicherheit & Zusammenarbeit (weitgehend abgeschlossen):** Refresh-Rotation, Logout, Login-Rate-Limit, Passwort-Reset und Haushaltseinladungen. Offen sind E-Mail-Verifikation, FEFO über mehrere Chargen und SSE.
-4. **Offline & Härtung:** vollständige Outbox-Synchronisation mit Konfliktcenter, E2E-Tests, Observability und belastbarer Backup-Restore-Test.
+3. **Kontosicherheit & Zusammenarbeit (abgeschlossen):** Refresh-Rotation, Logout, Login-Rate-Limit, Passwort-Reset, Haushaltseinladungen, Mitgliederverwaltung und persönliche Benachrichtigungskanäle.
+4. **Offline & Multi-Device (abgeschlossen):** FEFO, vollständige Outbox-Synchronisation mit Konfliktcenter, SSE-Live-Updates, Filter/Sortierung und Open-Food-Facts-Cache.
 5. **Phase 2 (nur Roadmap):** Rezeptbibliothek. Ein deterministisches Python-Pre-Scoring bewertet Verfügbarkeit und MHD-Dringlichkeit; ein austauschbares `RecipeRanker`-Interface erlaubt OpenAI, Anthropic oder Ollama ausschließlich über Umgebungsvariablen. Fehlende Zutaten fließen in die Einkaufsliste. Das Schema und `backend/app/units.py` sind vorbereitet, es gibt noch keine Rezept-UI und keine KI-Anbindung.
 
 ## Lizenz

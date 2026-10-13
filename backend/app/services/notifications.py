@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 def dispatch_notification(db: Session, notification: Notification) -> None:
     settings = get_settings()
     channels = list(notification.sent_channels)
-    members = list(
-        db.scalars(
-            select(User)
+    member_rows = list(
+        db.execute(
+            select(User, Membership)
             .join(Membership, Membership.user_id == User.id)
             .where(
                 Membership.household_id == notification.household_id,
@@ -44,23 +44,27 @@ def dispatch_notification(db: Session, notification: Notification) -> None:
                 smtp.starttls()
                 if settings.smtp_username:
                     smtp.login(settings.smtp_username, settings.smtp_password)
-                for member in members:
+                for member, membership in member_rows:
+                    if "email" not in membership.notification_channels:
+                        continue
                     message = EmailMessage()
                     message["Subject"] = "Vorrat: Neue Warnung"
                     message["From"] = settings.smtp_from
                     message["To"] = member.email
                     message.set_content(notification.message)
                     smtp.send_message(message)
-            channels.append("email")
+                    if "email" not in channels:
+                        channels.append("email")
         except (OSError, smtplib.SMTPException):
             logger.exception("Could not send notification email")
     if settings.vapid_private_key and "push" not in channels:
+        push_user_ids = [
+            member.id
+            for member, membership in member_rows
+            if "push" in membership.notification_channels
+        ]
         subscriptions = list(
-            db.scalars(
-                select(PushSubscription).where(
-                    PushSubscription.user_id.in_([member.id for member in members])
-                )
-            )
+            db.scalars(select(PushSubscription).where(PushSubscription.user_id.in_(push_user_ids)))
         )
         delivered = False
         for subscription in subscriptions:

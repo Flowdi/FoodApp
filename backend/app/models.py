@@ -69,6 +69,9 @@ class Membership(Base):
         ForeignKey("households.id", ondelete="CASCADE"), index=True
     )
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.member)
+    notification_channels: Mapped[list[str]] = mapped_column(
+        JSON, default=lambda: ["in_app", "email", "push"]
+    )
 
 
 class StorageLocation(Base):
@@ -102,6 +105,18 @@ class ProductBarcode(Base):
         ForeignKey("products.id", ondelete="CASCADE"), index=True
     )
     barcode: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+
+
+class ProductLookupCache(Base):
+    __tablename__ = "product_lookup_cache"
+    __table_args__ = (UniqueConstraint("household_id", "barcode"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    barcode: Mapped[str] = mapped_column(String(32), index=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class StockBatch(Base):
@@ -139,6 +154,7 @@ class StockMovement(Base):
     movement_type: Mapped[MovementType] = mapped_column(Enum(MovementType))
     quantity_delta: Mapped[Decimal] = mapped_column(Numeric(14, 3))
     idempotency_key: Mapped[str] = mapped_column(String(36))
+    operation_key: Mapped[str | None] = mapped_column(String(36), index=True)
     note: Mapped[str | None] = mapped_column(Text)
     client_info: Mapped[str | None] = mapped_column(String(255))
     reverses_movement_id: Mapped[str | None] = mapped_column(

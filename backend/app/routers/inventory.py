@@ -17,6 +17,7 @@ from ..models import (
     MovementType,
     Product,
     ProductBarcode,
+    ProductLookupCache,
     Role,
     StockBatch,
     StockMovement,
@@ -26,6 +27,7 @@ from ..models import (
 from ..schemas import (
     BatchRead,
     ChangeStockRequest,
+    FefoConsumeRequest,
     LocationRead,
     LookupResult,
     MovementRead,
@@ -36,7 +38,13 @@ from ..schemas import (
     ReversalRequest,
     TransferRequest,
 )
-from ..services.stock import apply_delta, existing_result, reverse_movement, transfer_stock
+from ..services.stock import (
+    apply_delta,
+    consume_fefo,
+    existing_result,
+    reverse_movement,
+    transfer_stock,
+)
 
 router = APIRouter(tags=["inventory"])
 
@@ -108,7 +116,19 @@ def by_barcode(
 
 
 @router.get("/lookup/{barcode}", response_model=LookupResult)
-def lookup(barcode: str, _: HouseholdContext = Depends(household_context)) -> LookupResult:
+def lookup(
+    barcode: str,
+    context: HouseholdContext = Depends(household_context),
+    db: Session = Depends(get_db),
+) -> LookupResult:
+    cached = db.scalar(
+        select(ProductLookupCache).where(
+            ProductLookupCache.household_id == context.membership.household_id,
+            ProductLookupCache.barcode == barcode,
+        )
+    )
+    if cached:
+        return LookupResult.model_validate(cached.payload)
     settings = get_settings()
     response = httpx.get(
         f"https://world.openfoodfacts.org/api/v2/product/{barcode}.json",
@@ -116,16 +136,26 @@ def lookup(barcode: str, _: HouseholdContext = Depends(household_context)) -> Lo
         timeout=8,
     )
     if response.status_code != 200 or response.json().get("status") != 1:
-        return LookupResult(barcode=barcode, found=False)
-    item = response.json().get("product", {})
-    return LookupResult(
-        barcode=barcode,
-        name=item.get("product_name_de") or item.get("product_name"),
-        brand=item.get("brands"),
-        quantity=item.get("quantity"),
-        image_url=item.get("image_front_small_url"),
-        found=True,
+        result = LookupResult(barcode=barcode, found=False)
+    else:
+        item = response.json().get("product", {})
+        result = LookupResult(
+            barcode=barcode,
+            name=item.get("product_name_de") or item.get("product_name"),
+            brand=item.get("brands"),
+            quantity=item.get("quantity"),
+            image_url=item.get("image_front_small_url"),
+            found=True,
+        )
+    db.add(
+        ProductLookupCache(
+            household_id=context.membership.household_id,
+            barcode=barcode,
+            payload=result.model_dump(mode="json"),
+        )
     )
+    db.commit()
+    return result
 
 
 @router.get("/stock", response_model=list[BatchRead])
@@ -215,6 +245,34 @@ def transfer(
         target_location_id=payload.target_location_id,
         quantity=payload.quantity,
         expected_version=payload.expected_version,
+        idempotency_key=payload.idempotency_key,
+        user_id=context.user.id,
+        note=payload.note,
+        client_info=payload.client_info,
+    )
+
+
+@router.post("/stock/consume-fefo", response_model=list[MovementResult])
+def consume_product_fefo(
+    payload: FefoConsumeRequest,
+    context: HouseholdContext = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> list[MovementResult]:
+    product = db.scalar(
+        select(Product).where(
+            Product.id == payload.product_id,
+            Product.household_id == context.membership.household_id,
+        )
+    )
+    if product is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Produkt nicht gefunden")
+    return consume_fefo(
+        db,
+        household_id=context.membership.household_id,
+        product_id=payload.product_id,
+        quantity=payload.quantity,
+        unit=payload.unit,
+        expected_versions=payload.expected_versions,
         idempotency_key=payload.idempotency_key,
         user_id=context.user.id,
         note=payload.note,
@@ -356,18 +414,30 @@ def movements(
     end: datetime | None = None,
     context: HouseholdContext = Depends(household_context),
     db: Session = Depends(get_db),
-) -> list[StockMovement]:
-    return list(
-        db.scalars(
-            movement_query(
-                context.membership.household_id,
-                user_id,
-                product_id,
-                movement_type,
-                start,
-                end,
-            )
-            .order_by(StockMovement.created_at.desc())
-            .limit(limit)
+) -> list[MovementRead]:
+    stmt = (
+        movement_query(
+            context.membership.household_id,
+            user_id,
+            product_id,
+            movement_type,
+            start,
+            end,
         )
+        .join(StockBatch, StockBatch.id == StockMovement.batch_id)
+        .join(Product, Product.id == StockBatch.product_id)
+        .join(User, User.id == StockMovement.user_id)
+        .with_only_columns(StockMovement, Product.id, Product.name, User.display_name)
+        .order_by(StockMovement.created_at.desc())
+        .limit(limit)
     )
+    return [
+        MovementRead.model_validate(movement).model_copy(
+            update={
+                "product_id": product_id_value,
+                "product_name": product_name,
+                "user_name": user_name,
+            }
+        )
+        for movement, product_id_value, product_name, user_name in db.execute(stmt)
+    ]

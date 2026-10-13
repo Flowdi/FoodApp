@@ -1,6 +1,6 @@
 from sqlalchemy import select
 
-from backend.app.models import AuditLog, Membership, Role
+from backend.app.models import AuditLog, Membership, ProductLookupCache, Role
 
 
 async def purchase(client, auth):
@@ -79,6 +79,12 @@ async def test_viewer_cannot_modify_catalog(client, auth):
         json={"name": "Nicht erlaubt"},
     )
     assert response.status_code == 403
+    household_update = await client.patch(
+        "/api/v1/households/current",
+        headers=auth[0],
+        json={"name": "Nicht erlaubt"},
+    )
+    assert household_update.status_code == 403
 
 
 async def test_history_csv_contains_product(client, auth):
@@ -137,3 +143,48 @@ async def test_low_stock_notification_is_debounced_and_resolved(client, auth):
     notifications = (await client.get("/api/v1/notifications", headers=auth[0])).json()
     assert len(notifications) == 1
     assert notifications[0]["resolved_at"] is not None
+
+
+async def test_product_lookup_uses_household_cache(client, auth):
+    with client.session_factory() as db:
+        db.add(
+            ProductLookupCache(
+                household_id=auth[0]["X-Household-ID"],
+                barcode="12345678",
+                payload={
+                    "barcode": "12345678",
+                    "name": "Cached Product",
+                    "brand": "Local",
+                    "quantity": "1 Packung",
+                    "image_url": None,
+                    "found": True,
+                },
+            )
+        )
+        db.commit()
+    response = await client.get("/api/v1/lookup/12345678", headers=auth[0])
+    assert response.status_code == 200
+    assert response.json()["name"] == "Cached Product"
+
+
+async def test_notification_preferences_are_per_membership(client, auth):
+    response = await client.put(
+        "/api/v1/notifications/preferences",
+        headers=auth[0],
+        json={"channels": ["in_app", "email"]},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"channels": ["in_app", "email"]}
+    current = await client.get("/api/v1/notifications/preferences", headers=auth[0])
+    assert current.json() == {"channels": ["in_app", "email"]}
+    invalid = await client.put(
+        "/api/v1/notifications/preferences",
+        headers=auth[0],
+        json={"channels": ["sms"]},
+    )
+    assert invalid.status_code == 422
+
+
+async def test_event_stream_requires_authentication(client):
+    response = await client.get("/api/v1/events")
+    assert response.status_code == 401

@@ -75,6 +75,34 @@ class InvitationAccepted(BaseModel):
     role: Role
 
 
+class HouseholdRead(ORMModel):
+    id: str
+    name: str
+    timezone: str
+    expiry_warning_days: int
+
+
+class HouseholdUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    expiry_warning_days: int | None = Field(default=None, ge=0, le=365)
+
+
+class MemberRead(BaseModel):
+    user_id: str
+    email: EmailStr
+    display_name: str
+    role: Role
+
+
+class MemberRoleUpdate(BaseModel):
+    role: Role
+
+
+class NotificationPreferences(BaseModel):
+    channels: list[str]
+
+
 class UserRead(ORMModel):
     id: str
     email: EmailStr
@@ -145,6 +173,16 @@ class PurchaseRequest(BaseModel):
 class ChangeStockRequest(BaseModel):
     quantity: Quantity
     expected_version: int = Field(ge=1)
+    idempotency_key: str
+    note: str | None = None
+    client_info: str | None = None
+
+
+class FefoConsumeRequest(BaseModel):
+    product_id: str
+    quantity: Quantity
+    unit: str
+    expected_versions: dict[str, int]
     idempotency_key: str
     note: str | None = None
     client_info: str | None = None
@@ -255,6 +293,9 @@ class MovementRead(ORMModel):
     client_info: str | None
     reverses_movement_id: str | None
     created_at: datetime
+    product_id: str | None = None
+    product_name: str | None = None
+    user_name: str | None = None
 
 
 class MovementResult(BaseModel):

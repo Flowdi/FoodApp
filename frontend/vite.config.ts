@@ -19,7 +19,7 @@ export default defineConfig({
           { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }
         ]
       },
-      workbox: { navigateFallback: '/index.html', runtimeCaching: [{ urlPattern: /^\/api\//, handler: 'NetworkOnly' }] }
+      workbox: { importScripts: ['/push-handler.js'], navigateFallback: '/index.html', runtimeCaching: [{ urlPattern: /^\/api\//, handler: 'NetworkOnly' }] }
     })
   ],
   server: { proxy: { '/api': 'http://127.0.0.1:8000' } }

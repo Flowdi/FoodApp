@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .jobs import create_scheduler
-from .routers import auth, catalog, households, inventory, inventory_sessions, notifications
+from .routers import auth, catalog, events, households, inventory, inventory_sessions, notifications
 
 settings = get_settings()
 
@@ -35,6 +35,7 @@ app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(inventory_sessions.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(households.router, prefix="/api/v1")
+app.include_router(events.router, prefix="/api/v1")
 
 
 @app.get("/healthz", include_in_schema=False)

@@ -7,9 +7,18 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..database import get_db
-from ..dependencies import HouseholdContext, current_user, require_admin
+from ..dependencies import HouseholdContext, current_user, household_context, require_admin
 from ..models import Household, HouseholdInvitation, Membership, Role, User
-from ..schemas import InvitationAccept, InvitationAccepted, InvitationCreate, InvitationRead
+from ..schemas import (
+    HouseholdRead,
+    HouseholdUpdate,
+    InvitationAccept,
+    InvitationAccepted,
+    InvitationCreate,
+    InvitationRead,
+    MemberRead,
+    MemberRoleUpdate,
+)
 from ..security import hash_token
 from ..services.email import send_email
 
@@ -20,6 +29,106 @@ def is_expired(value: datetime) -> bool:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value <= datetime.now(UTC)
+
+
+@router.get("/current", response_model=HouseholdRead)
+def current_household(
+    context: HouseholdContext = Depends(household_context),
+    db: Session = Depends(get_db),
+) -> Household:
+    household = db.get(Household, context.membership.household_id)
+    assert household is not None
+    return household
+
+
+@router.patch("/current", response_model=HouseholdRead)
+def update_household(
+    payload: HouseholdUpdate,
+    context: HouseholdContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Household:
+    household = db.get(Household, context.membership.household_id)
+    assert household is not None
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(household, field, value)
+    db.commit()
+    db.refresh(household)
+    return household
+
+
+@router.get("/members", response_model=list[MemberRead])
+def members(
+    context: HouseholdContext = Depends(household_context),
+    db: Session = Depends(get_db),
+) -> list[MemberRead]:
+    rows = db.execute(
+        select(Membership, User)
+        .join(User, User.id == Membership.user_id)
+        .where(Membership.household_id == context.membership.household_id)
+        .order_by(User.display_name)
+    )
+    return [
+        MemberRead(
+            user_id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            role=membership.role,
+        )
+        for membership, user in rows
+    ]
+
+
+def manageable_membership(db: Session, context: HouseholdContext, user_id: str) -> Membership:
+    membership = db.scalar(
+        select(Membership).where(
+            Membership.household_id == context.membership.household_id,
+            Membership.user_id == user_id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mitglied nicht gefunden")
+    if membership.role == Role.owner:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Owner kann hier nicht geändert werden")
+    if context.membership.role == Role.admin and membership.role == Role.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins können keine Admins verwalten")
+    return membership
+
+
+@router.patch("/members/{user_id}", response_model=MemberRead)
+def update_member(
+    user_id: str,
+    payload: MemberRoleUpdate,
+    context: HouseholdContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> MemberRead:
+    if payload.role == Role.owner:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Owner-Rolle ist nicht übertragbar"
+        )
+    if context.membership.role == Role.admin and payload.role == Role.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Nur Owner können Admins ernennen")
+    membership = manageable_membership(db, context, user_id)
+    membership.role = payload.role
+    user = db.get(User, user_id)
+    assert user is not None
+    db.commit()
+    return MemberRead(
+        user_id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        role=membership.role,
+    )
+
+
+@router.delete("/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_member(
+    user_id: str,
+    context: HouseholdContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> None:
+    membership = manageable_membership(db, context, user_id)
+    db.delete(membership)
+    db.commit()
 
 
 @router.post("/invitations", response_model=InvitationRead, status_code=status.HTTP_201_CREATED)

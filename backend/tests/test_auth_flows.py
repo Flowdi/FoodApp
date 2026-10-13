@@ -182,3 +182,24 @@ async def test_invited_user_can_register_directly(client: httpx.AsyncClient, aut
     assert bootstrap.json()["memberships"] == [
         {"household_id": owner_headers["X-Household-ID"], "role": "viewer"}
     ]
+
+    members = await client.get("/api/v1/households/members", headers=owner_headers)
+    assert members.status_code == 200
+    invitee = next(item for item in members.json() if item["email"] == "new-user@example.com")
+    changed = await client.patch(
+        f"/api/v1/households/members/{invitee['user_id']}",
+        headers=owner_headers,
+        json={"role": "member"},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["role"] == "member"
+    removed = await client.delete(
+        f"/api/v1/households/members/{invitee['user_id']}", headers=owner_headers
+    )
+    assert removed.status_code == 204
+
+    former_member_headers = {
+        "Authorization": f"Bearer {access_token}",
+        "X-Household-ID": owner_headers["X-Household-ID"],
+    }
+    assert (await client.get("/api/v1/products", headers=former_member_headers)).status_code == 403

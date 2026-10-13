@@ -4,13 +4,46 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..database import get_db
 from ..dependencies import HouseholdContext, household_context, require_admin
 from ..models import Household, Notification, PushSubscription
-from ..schemas import NotificationRead, PushSubscriptionWrite
+from ..schemas import NotificationPreferences, NotificationRead, PushSubscriptionWrite
 from ..services.notifications import evaluate_household
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
+ALLOWED_CHANNELS = {"in_app", "email", "push"}
+
+
+@router.get("/vapid-public-key")
+def vapid_public_key(
+    _: HouseholdContext = Depends(household_context),
+) -> dict[str, str]:
+    public_key = get_settings().vapid_public_key
+    if not public_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Web Push ist nicht konfiguriert")
+    return {"public_key": public_key}
+
+
+@router.get("/preferences", response_model=NotificationPreferences)
+def preferences(
+    context: HouseholdContext = Depends(household_context),
+) -> NotificationPreferences:
+    return NotificationPreferences(channels=context.membership.notification_channels)
+
+
+@router.put("/preferences", response_model=NotificationPreferences)
+def update_preferences(
+    payload: NotificationPreferences,
+    context: HouseholdContext = Depends(household_context),
+    db: Session = Depends(get_db),
+) -> NotificationPreferences:
+    channels = list(dict.fromkeys(payload.channels))
+    if not set(channels).issubset(ALLOWED_CHANNELS):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unbekannter Kanal")
+    context.membership.notification_channels = channels
+    db.commit()
+    return NotificationPreferences(channels=channels)
 
 
 @router.post("/push-subscriptions", status_code=status.HTTP_204_NO_CONTENT)
@@ -37,6 +70,8 @@ def notifications(
     context: HouseholdContext = Depends(household_context),
     db: Session = Depends(get_db),
 ) -> list[Notification]:
+    if "in_app" not in context.membership.notification_channels:
+        return []
     return list(
         db.scalars(
             select(Notification)

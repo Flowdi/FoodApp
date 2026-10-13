@@ -24,6 +24,151 @@ def existing_result(db: Session, household_id: str, key: str) -> MovementResult 
     return MovementResult(movement=movement, batch=batch, replayed=True)
 
 
+def existing_operation(db: Session, household_id: str, key: str) -> list[MovementResult]:
+    movements = list(
+        db.scalars(
+            select(StockMovement)
+            .where(
+                StockMovement.household_id == household_id,
+                StockMovement.operation_key == key,
+            )
+            .order_by(StockMovement.created_at, StockMovement.id)
+        )
+    )
+    if movements:
+        namespace = uuid.UUID(key)
+        order = {key: 0}
+        order.update(
+            {
+                str(uuid.uuid5(namespace, f"fefo:{index}")): index
+                for index in range(1, len(movements))
+            }
+        )
+        movements.sort(key=lambda movement: order.get(movement.idempotency_key, len(movements)))
+    results: list[MovementResult] = []
+    for movement in movements:
+        batch = db.scalar(
+            select(StockBatch).where(
+                StockBatch.id == movement.batch_id,
+                StockBatch.household_id == household_id,
+            )
+        )
+        assert batch is not None
+        results.append(MovementResult(movement=movement, batch=batch, replayed=True))
+    return results
+
+
+def consume_fefo(
+    db: Session,
+    *,
+    household_id: str,
+    product_id: str,
+    quantity: Decimal,
+    unit: str,
+    expected_versions: dict[str, int],
+    idempotency_key: str,
+    user_id: str,
+    note: str | None,
+    client_info: str | None,
+) -> list[MovementResult]:
+    replay = existing_operation(db, household_id, idempotency_key)
+    if replay:
+        return replay
+    collision = db.scalar(
+        select(StockMovement).where(
+            StockMovement.household_id == household_id,
+            StockMovement.idempotency_key == idempotency_key,
+        )
+    )
+    if collision:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "idempotency_conflict", "message": "Idempotency-Key ist bereits belegt"},
+        )
+    try:
+        namespace = uuid.UUID(idempotency_key)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Ungültiger Idempotency-Key"
+        ) from exc
+
+    batches = list(
+        db.scalars(
+            select(StockBatch)
+            .where(
+                StockBatch.household_id == household_id,
+                StockBatch.product_id == product_id,
+                StockBatch.unit == unit,
+                StockBatch.quantity > 0,
+            )
+            .order_by(StockBatch.best_before.asc().nullslast(), StockBatch.id)
+            .with_for_update()
+        )
+    )
+    replay = existing_operation(db, household_id, idempotency_key)
+    if replay:
+        return replay
+    if sum((batch.quantity for batch in batches), Decimal("0")) < quantity:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "insufficient_stock", "message": "Nicht genügend Bestand"},
+        )
+
+    remaining = quantity
+    movements: list[tuple[StockMovement, StockBatch]] = []
+    for index, batch in enumerate(batches):
+        if remaining <= 0:
+            break
+        expected_version = expected_versions.get(batch.id)
+        if expected_version != batch.version:
+            db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {
+                    "code": "version_conflict",
+                    "message": "Bestand wurde zwischenzeitlich geändert",
+                    "current": {
+                        "id": batch.id,
+                        "quantity": str(batch.quantity),
+                        "version": batch.version,
+                    },
+                },
+            )
+        amount = min(batch.quantity, remaining)
+        batch.quantity -= amount
+        batch.version += 1
+        movement = StockMovement(
+            household_id=household_id,
+            batch_id=batch.id,
+            user_id=user_id,
+            movement_type=MovementType.consume,
+            quantity_delta=-amount,
+            idempotency_key=(
+                idempotency_key if index == 0 else str(uuid.uuid5(namespace, f"fefo:{index}"))
+            ),
+            operation_key=idempotency_key,
+            note=note,
+            client_info=client_info,
+        )
+        db.add(movement)
+        movements.append((movement, batch))
+        remaining -= amount
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        replay = existing_operation(db, household_id, idempotency_key)
+        if replay:
+            return replay
+        raise
+    results: list[MovementResult] = []
+    for movement, batch in movements:
+        db.refresh(movement)
+        db.refresh(batch)
+        results.append(MovementResult(movement=movement, batch=batch))
+    return results
+
+
 def apply_delta(
     db: Session,
     *,
