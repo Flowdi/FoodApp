@@ -22,7 +22,7 @@ jobs:
       - run: ruff format --check backend
       - run: mypy backend/app
       - run: alembic upgrade head
-      - run: pytest
+      - run: python -m pytest
   frontend:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: frontend } }
