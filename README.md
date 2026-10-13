@@ -13,16 +13,16 @@ Enthalten sind:
 - Produkte mit mehreren Barcodes, Lagerorte und Chargen
 - transaktionales Buchungsjournal für Einkauf, Entnahme, Entsorgung und Storno
 - Idempotency-Key je Schreibvorgang, pessimistische Zeilensperre plus Optimistic Locking (`version`)
-- Browser-Barcode-Scan (EAN/UPC via ZXing), manueller Fallback und haushaltsbezogen gecachter Open-Food-Facts-Lookup
+- Browser-Barcode-Scan (EAN/UPC via ZXing) zum Einbuchen, Entnehmen, Entsorgen und Zählen, manueller Fallback und haushaltsbezogen gecachter Open-Food-Facts-Lookup inklusive Packungsgröße und Produktbild
 - installierbare Vue-3-PWA in deutscher, i18n-fähiger Oberfläche; responsiv und mit Dark Mode
 - vollständige IndexedDB-Outbox mit automatischem Reconnect-Versand und Konfliktcenter
-- geräteübergreifende Live-Aktualisierung über authentifizierte Server-Sent Events
-- automatische FEFO-Entnahme über mehrere Chargen in einer DB-Transaktion
+- geräteübergreifende Live-Aktualisierung über authentifizierte Server-Sent Events mit Polling-Fallback
+- automatische FEFO-Entnahme und -Entsorgung über mehrere Chargen in einer DB-Transaktion
 - Produkt- und Chargenbearbeitung mit serverseitiger Rollenprüfung und Audit-Log
 - Umlagerungen als zwei ausgeglichene, idempotente Journalbuchungen
-- Inventur für Haushalt oder Lagerort mit Soll/Ist-Abgleich und `adjust`-Buchungen
+- atomare, versionsgesicherte Inventur für Haushalt oder Lagerort mit Soll/Ist-Abgleich und `adjust`-Buchungen
 - filterbarer Buchungsverlauf inklusive Nutzer/Gerät und Excel-kompatibler UTF-8-CSV-Export
-- Mindestbestände, automatisch abgeleitete Einkaufsliste und entprellte Warnungen
+- einheitenübergreifende Mindestbestände, automatisch abgeleitete Einkaufsliste und entprellte Warnungen
 - täglicher MHD-/Mindestbestand-Job sowie individuell konfigurierbarer In-App-, SMTP- und Web-Push-Versand
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
@@ -117,7 +117,7 @@ mypy backend/app
 cd frontend && npm run build
 ```
 
-Die Pflichtpfade für Idempotenz, einmaliges Storno, Einheiten und konkurrierende Entnahme sind angelegt. Für echte Parallelitätsaussagen muss der Konkurrenztest gegen PostgreSQL laufen; SQLite ignoriert Zeilensperren und ist nur für schnelle lokale Tests gedacht. GitHub Actions startet deshalb PostgreSQL als Service.
+Die Pflichtpfade für Idempotenz, einmaliges Storno, Einheiten, atomare Inventur und konkurrierende Entnahme sind angelegt. UUID-Idempotency-Keys sowie stabile 409-Fehlercodes werden an der API-Grenze geprüft. Für echte Parallelitätsaussagen muss der Konkurrenztest gegen PostgreSQL laufen; SQLite ignoriert Zeilensperren und ist nur für schnelle lokale Tests gedacht. GitHub Actions startet deshalb eine leere PostgreSQL-Datenbank, führt `alembic upgrade head` aus und startet danach die Tests.
 
 ## Backup und Wiederherstellung
 

@@ -64,7 +64,10 @@ def token_pair(db: Session, user: User) -> TokenPair:
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenPair:
     email = payload.email.lower()
     if db.scalar(select(User).where(User.email == email)):
-        raise HTTPException(status.HTTP_409_CONFLICT, "E-Mail ist bereits registriert")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "email_registered", "message": "E-Mail ist bereits registriert"},
+        )
     user = User(
         email=email,
         display_name=payload.display_name,

@@ -2,11 +2,10 @@ import json
 import logging
 import smtplib
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 from email.message import EmailMessage
 
 from pywebpush import WebPushException, webpush  # type: ignore[import-untyped]
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +20,7 @@ from ..models import (
     StockBatch,
     User,
 )
+from ..units import sum_converted
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +125,16 @@ def evaluate_household(db: Session, household: Household) -> int:
     )
     for rule in rules:
         product = db.get(Product, rule.product_id)
-        current = db.scalar(
-            select(func.coalesce(func.sum(StockBatch.quantity), 0)).where(
+        batches = db.scalars(
+            select(StockBatch).where(
                 StockBatch.household_id == household.id,
                 StockBatch.product_id == rule.product_id,
+                StockBatch.quantity > 0,
             )
         )
-        current_quantity = Decimal(current or 0)
+        current_quantity = sum_converted(
+            ((batch.quantity, batch.unit) for batch in batches), rule.unit
+        )
         dedupe_key = f"low-stock:{rule.id}"
         existing = db.scalar(select(Notification).where(Notification.dedupe_key == dedupe_key))
         if current_quantity < rule.minimum_quantity and existing is None:

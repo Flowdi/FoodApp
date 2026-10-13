@@ -6,7 +6,14 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..dependencies import HouseholdContext, household_context, require_writer
-from ..models import InventoryCount, InventorySession, MovementType, StockBatch, StorageLocation
+from ..models import (
+    InventoryCount,
+    InventorySession,
+    MovementType,
+    StockBatch,
+    StockMovement,
+    StorageLocation,
+)
 from ..schemas import (
     InventoryConfirmRequest,
     InventoryCountRead,
@@ -15,7 +22,7 @@ from ..schemas import (
     InventoryStartRequest,
     MovementResult,
 )
-from ..services.stock import apply_delta
+from ..services.stock import existing_operation
 
 router = APIRouter(prefix="/inventory-sessions", tags=["inventory sessions"])
 
@@ -66,6 +73,7 @@ def start_inventory(
             session_id=inventory.id,
             batch_id=batch.id,
             expected_quantity=batch.quantity,
+            expected_version=batch.version,
             counted_quantity=batch.quantity,
         )
         for batch in db.scalars(stmt)
@@ -102,7 +110,10 @@ def record_count(
 ) -> InventoryCount:
     inventory = load_session(db, context.membership.household_id, session_id)
     if inventory.status != "open":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Inventur ist bereits abgeschlossen")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "inventory_completed", "message": "Inventur ist bereits abgeschlossen"},
+        )
     count = db.scalar(
         select(InventoryCount).where(
             InventoryCount.session_id == inventory.id,
@@ -122,6 +133,7 @@ def record_count(
             session_id=inventory.id,
             batch_id=batch.id,
             expected_quantity=batch.quantity,
+            expected_version=batch.version,
             counted_quantity=payload.counted_quantity,
         )
         db.add(count)
@@ -139,39 +151,78 @@ def confirm_inventory(
     context: HouseholdContext = Depends(require_writer),
     db: Session = Depends(get_db),
 ) -> list[MovementResult]:
-    inventory = load_session(db, context.membership.household_id, session_id)
+    inventory = db.scalar(
+        select(InventorySession)
+        .where(
+            InventorySession.id == session_id,
+            InventorySession.household_id == context.membership.household_id,
+        )
+        .with_for_update()
+    )
+    if inventory is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inventur nicht gefunden")
+    replay = existing_operation(db, context.membership.household_id, payload.idempotency_key)
+    if replay:
+        return replay
     if inventory.status == "completed":
-        return []
-    try:
-        namespace = uuid.UUID(payload.idempotency_key)
-    except ValueError as exc:
+        if inventory.confirmation_key == payload.idempotency_key:
+            return []
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "Ungültiger Idempotency-Key"
-        ) from exc
+            status.HTTP_409_CONFLICT,
+            {"code": "inventory_completed", "message": "Inventur ist bereits abgeschlossen"},
+        )
+    namespace = uuid.UUID(payload.idempotency_key)
     counts = list(
         db.scalars(select(InventoryCount).where(InventoryCount.session_id == inventory.id))
     )
-    results: list[MovementResult] = []
+    changed: list[tuple[StockMovement, StockBatch]] = []
     for count in counts:
-        batch = db.get(StockBatch, count.batch_id)
+        batch = db.scalar(
+            select(StockBatch)
+            .where(
+                StockBatch.id == count.batch_id,
+                StockBatch.household_id == context.membership.household_id,
+            )
+            .with_for_update()
+        )
         if batch is None:
             continue
+        if batch.version != count.expected_version:
+            db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {
+                    "code": "inventory_conflict",
+                    "message": "Bestand wurde seit Beginn der Inventur geändert",
+                    "current": {
+                        "id": batch.id,
+                        "quantity": str(batch.quantity),
+                        "version": batch.version,
+                    },
+                },
+            )
         delta = count.counted_quantity - batch.quantity
         if delta:
-            results.append(
-                apply_delta(
-                    db,
-                    household_id=context.membership.household_id,
-                    batch_id=batch.id,
-                    user_id=context.user.id,
-                    movement_type=MovementType.adjust,
-                    delta=delta,
-                    expected_version=batch.version,
-                    idempotency_key=str(uuid.uuid5(namespace, batch.id)),
-                    note=f"Inventur {inventory.id}",
-                )
+            batch.quantity += delta
+            batch.version += 1
+            movement = StockMovement(
+                household_id=context.membership.household_id,
+                batch_id=batch.id,
+                user_id=context.user.id,
+                movement_type=MovementType.adjust,
+                quantity_delta=delta,
+                idempotency_key=str(uuid.uuid5(namespace, batch.id)),
+                operation_key=payload.idempotency_key,
+                note=f"Inventur {inventory.id}",
             )
-    inventory = load_session(db, context.membership.household_id, session_id)
+            db.add(movement)
+            changed.append((movement, batch))
     inventory.status = "completed"
+    inventory.confirmation_key = payload.idempotency_key
     db.commit()
+    results: list[MovementResult] = []
+    for movement, batch in changed:
+        db.refresh(movement)
+        db.refresh(batch)
+        results.append(MovementResult(movement=movement, batch=batch))
     return results

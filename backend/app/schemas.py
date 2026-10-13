@@ -1,13 +1,21 @@
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from .models import MovementType, Role
 
 Quantity = Annotated[Decimal, Field(gt=0, decimal_places=3)]
 RecipeTag = Annotated[str, Field(min_length=1, max_length=50)]
+
+
+def canonical_uuid(value: str) -> str:
+    return str(uuid.UUID(value))
+
+
+IdempotencyKey = Annotated[str, AfterValidator(canonical_uuid)]
 
 
 class ORMModel(BaseModel):
@@ -126,6 +134,7 @@ class ProductCreate(BaseModel):
     category: str | None = None
     default_unit: str = "piece"
     image_url: str | None = None
+    package_quantity: str | None = Field(default=None, max_length=80)
     notes: str | None = None
     barcodes: list[str] = []
 
@@ -136,6 +145,7 @@ class ProductUpdate(BaseModel):
     category: str | None = None
     default_unit: str | None = None
     image_url: str | None = None
+    package_quantity: str | None = Field(default=None, max_length=80)
     notes: str | None = None
     barcodes: list[str] | None = None
 
@@ -148,6 +158,8 @@ class ProductRead(ORMModel):
     category: str | None
     default_unit: str
     image_url: str | None
+    package_quantity: str | None
+    notes: str | None
     barcodes: list["BarcodeRead"]
 
 
@@ -162,6 +174,7 @@ class BatchRead(ORMModel):
     quantity: Decimal
     unit: str
     best_before: date | None
+    opened_at: date | None
     version: int
     product: ProductRead
 
@@ -172,14 +185,14 @@ class PurchaseRequest(BaseModel):
     quantity: Quantity
     unit: str
     best_before: date | None = None
-    idempotency_key: str
+    idempotency_key: IdempotencyKey
     client_info: str | None = None
 
 
 class ChangeStockRequest(BaseModel):
     quantity: Quantity
     expected_version: int = Field(ge=1)
-    idempotency_key: str
+    idempotency_key: IdempotencyKey
     note: str | None = None
     client_info: str | None = None
 
@@ -189,7 +202,7 @@ class FefoConsumeRequest(BaseModel):
     quantity: Quantity
     unit: str
     expected_versions: dict[str, int]
-    idempotency_key: str
+    idempotency_key: IdempotencyKey
     note: str | None = None
     client_info: str | None = None
 
@@ -207,7 +220,7 @@ class TransferRequest(BaseModel):
     target_location_id: str
     quantity: Quantity
     expected_version: int = Field(ge=1)
-    idempotency_key: str
+    idempotency_key: IdempotencyKey
     note: str | None = None
     client_info: str | None = None
 
@@ -315,11 +328,12 @@ class InventoryCountWrite(BaseModel):
 class InventoryCountRead(ORMModel):
     batch_id: str
     expected_quantity: Decimal
+    expected_version: int
     counted_quantity: Decimal
 
 
 class InventoryConfirmRequest(BaseModel):
-    idempotency_key: str
+    idempotency_key: IdempotencyKey
 
 
 class InventoryDetail(BaseModel):
@@ -344,7 +358,7 @@ class PushSubscriptionWrite(BaseModel):
 
 
 class ReversalRequest(BaseModel):
-    idempotency_key: str
+    idempotency_key: IdempotencyKey
     expected_version: int = Field(ge=1)
 
 

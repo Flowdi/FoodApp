@@ -70,6 +70,7 @@ def consume_fefo(
     user_id: str,
     note: str | None,
     client_info: str | None,
+    movement_type: MovementType = MovementType.consume,
 ) -> list[MovementResult]:
     replay = existing_operation(db, household_id, idempotency_key)
     if replay:
@@ -108,10 +109,15 @@ def consume_fefo(
     replay = existing_operation(db, household_id, idempotency_key)
     if replay:
         return replay
-    if sum((batch.quantity for batch in batches), Decimal("0")) < quantity:
+    available = sum((batch.quantity for batch in batches), Decimal("0"))
+    if available < quantity:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            {"code": "insufficient_stock", "message": "Nicht genügend Bestand"},
+            {
+                "code": "insufficient_stock",
+                "message": "Nicht genügend Bestand",
+                "current": {"quantity": str(available), "unit": unit},
+            },
         )
 
     remaining = quantity
@@ -141,7 +147,7 @@ def consume_fefo(
             household_id=household_id,
             batch_id=batch.id,
             user_id=user_id,
-            movement_type=MovementType.consume,
+            movement_type=movement_type,
             quantity_delta=-amount,
             idempotency_key=(
                 idempotency_key if index == 0 else str(uuid.uuid5(namespace, f"fefo:{index}"))
@@ -284,7 +290,13 @@ def reverse_movement(
     if original is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Buchung nicht gefunden")
     if original.movement_type == MovementType.reversal:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Ein Storno kann nicht storniert werden")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "reversal_not_reversible",
+                "message": "Ein Storno kann nicht storniert werden",
+            },
+        )
     if not can_reverse_any and original.user_id != user_id:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Nur eigene Buchungen können storniert werden"
@@ -293,7 +305,10 @@ def reverse_movement(
         select(StockMovement).where(StockMovement.reverses_movement_id == original.id)
     )
     if already_reversed:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Buchung wurde bereits storniert")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "already_reversed", "message": "Buchung wurde bereits storniert"},
+        )
     return apply_delta(
         db,
         household_id=household_id,
@@ -342,11 +357,36 @@ def transfer_stock(
     if source is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Bestandsposition nicht gefunden")
     if source.location_id == target_location_id:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Quell- und Ziellagerort sind identisch")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "same_location", "message": "Quell- und Ziellagerort sind identisch"},
+        )
     if source.version != expected_version:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Bestand wurde zwischenzeitlich geändert")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "version_conflict",
+                "message": "Bestand wurde zwischenzeitlich geändert",
+                "current": {
+                    "id": source.id,
+                    "quantity": str(source.quantity),
+                    "version": source.version,
+                },
+            },
+        )
     if source.quantity < quantity:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Nicht genügend Bestand")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "insufficient_stock",
+                "message": "Nicht genügend Bestand",
+                "current": {
+                    "id": source.id,
+                    "quantity": str(source.quantity),
+                    "version": source.version,
+                },
+            },
+        )
     target = db.scalar(
         select(StockBatch)
         .where(

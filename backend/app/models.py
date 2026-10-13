@@ -97,6 +97,7 @@ class Product(Base):
     category: Mapped[str | None] = mapped_column(String(120), index=True)
     default_unit: Mapped[str] = mapped_column(String(20), default="piece")
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    package_quantity: Mapped[str | None] = mapped_column(String(80))
     notes: Mapped[str | None] = mapped_column(Text)
     barcodes: Mapped[list["ProductBarcode"]] = relationship(cascade="all, delete-orphan")
 
@@ -234,6 +235,7 @@ class InventorySession(Base):
     location_id: Mapped[str | None] = mapped_column(ForeignKey("storage_locations.id"))
     created_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(20), default="open")
+    confirmation_key: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -244,6 +246,7 @@ class InventoryCount(Base):
     session_id: Mapped[str] = mapped_column(ForeignKey("inventory_sessions.id", ondelete="CASCADE"))
     batch_id: Mapped[str] = mapped_column(ForeignKey("stock_batches.id"))
     expected_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    expected_version: Mapped[int] = mapped_column(default=1, nullable=False)
     counted_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
 
 

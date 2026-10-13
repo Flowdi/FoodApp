@@ -1,6 +1,6 @@
 import { discardConflict, flushOutbox, offlineState, queueRequest, retryConflict, type OfflineConflict } from './offline'
 
-export type Product = { id: string; name: string; brand?: string; category?: string; default_unit: string; image_url?: string; notes?: string; barcodes: { barcode: string }[] }
+export type Product = { id: string; name: string; brand?: string; category?: string; default_unit: string; image_url?: string; package_quantity?: string; notes?: string; barcodes: { barcode: string }[] }
 export type Batch = { id: string; product_id: string; location_id: string; quantity: string; unit: string; best_before?: string; opened_at?: string; version: number; product: Product }
 export type Location = { id: string; name: string }
 export type MovementResult = { movement: { id: string }; batch: Batch; replayed: boolean }
@@ -11,7 +11,7 @@ export type Recipe = { id: string; name: string; servings: number; instructions?
 export type MissingIngredient = { product_id: string; product_name: string; required_quantity: string; available_quantity: string; missing_quantity: string; unit: string }
 export type RecipeRecommendation = { recipe: Recipe; score: number; availability_score: number; expiry_score: number; preference_score: number; missing_ingredients: MissingIngredient[]; explanation: string; ranking_source: string }
 export type RecipePreferences = { preferred_tags: string[]; excluded_tags: string[] }
-export type InventoryCount = { batch_id: string; expected_quantity: string; counted_quantity: string }
+export type InventoryCount = { batch_id: string; expected_quantity: string; expected_version: number; counted_quantity: string }
 export type InventoryDetail = { session: { id: string; location_id?: string; status: string; created_at: string }; counts: InventoryCount[] }
 export type Notification = { id: string; kind: string; message: string; read_at?: string; resolved_at?: string; created_at: string }
 export type Household = { id: string; name: string; timezone: string; expiry_warning_days: number }
@@ -91,7 +91,8 @@ async function streamEvents(onChange: () => void, signal: AbortSignal) {
       }
     } catch {
       if (signal.aborted) return
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      onChange()
+      await new Promise(resolve => setTimeout(resolve, 10000))
     }
   }
 }
@@ -124,10 +125,11 @@ export const api = {
   locations: () => request<Location[]>('/locations'),
   stock: () => request<Batch[]>('/stock'),
   barcode: (code: string) => request<Product>(`/products/barcode/${code}`),
-  lookup: (code: string) => request<{ found: boolean; name?: string; brand?: string; image_url?: string }>(`/lookup/${code}`),
+  lookup: (code: string) => request<{ found: boolean; name?: string; brand?: string; quantity?: string; image_url?: string }>(`/lookup/${code}`),
   createProduct: (body: object) => request<Product>('/products', { method: 'POST', body: JSON.stringify(body) }),
   purchase: (body: Record<string, unknown>) => offlineRequest<MovementResult>('/stock/purchase', body),
   consumeFefo: (productId: string, unit: string, quantity: number, batches: Batch[]) => offlineRequest<MovementResult[]>('/stock/consume-fefo', { product_id: productId, unit, quantity, expected_versions: Object.fromEntries(batches.filter(batch => batch.product_id === productId && batch.unit === unit).map(batch => [batch.id, batch.version])), idempotency_key: crypto.randomUUID(), client_info: navigator.userAgent }),
+  discardFefo: (productId: string, unit: string, quantity: number, batches: Batch[]) => offlineRequest<MovementResult[]>('/stock/discard-fefo', { product_id: productId, unit, quantity, expected_versions: Object.fromEntries(batches.filter(batch => batch.product_id === productId && batch.unit === unit).map(batch => [batch.id, batch.version])), idempotency_key: crypto.randomUUID(), client_info: navigator.userAgent }),
   consume: (batch: Batch, quantity: number, idempotency_key = crypto.randomUUID()) => offlineRequest<MovementResult>(`/stock/${batch.id}/consume`, { quantity, expected_version: batch.version, idempotency_key, client_info: navigator.userAgent }),
   discard: (batch: Batch, quantity: number, idempotency_key = crypto.randomUUID()) => offlineRequest<MovementResult>(`/stock/${batch.id}/discard`, { quantity, expected_version: batch.version, idempotency_key, client_info: navigator.userAgent }),
   transfer: (batch: Batch, target_location_id: string, quantity: number) => offlineRequest<MovementResult[]>('/stock/transfer', { batch_id: batch.id, target_location_id, quantity, expected_version: batch.version, idempotency_key: crypto.randomUUID(), client_info: navigator.userAgent }),

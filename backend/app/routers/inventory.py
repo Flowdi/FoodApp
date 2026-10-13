@@ -280,6 +280,35 @@ def consume_product_fefo(
     )
 
 
+@router.post("/stock/discard-fefo", response_model=list[MovementResult])
+def discard_product_fefo(
+    payload: FefoConsumeRequest,
+    context: HouseholdContext = Depends(require_writer),
+    db: Session = Depends(get_db),
+) -> list[MovementResult]:
+    product = db.scalar(
+        select(Product).where(
+            Product.id == payload.product_id,
+            Product.household_id == context.membership.household_id,
+        )
+    )
+    if product is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Produkt nicht gefunden")
+    return consume_fefo(
+        db,
+        household_id=context.membership.household_id,
+        product_id=payload.product_id,
+        quantity=payload.quantity,
+        unit=payload.unit,
+        expected_versions=payload.expected_versions,
+        idempotency_key=payload.idempotency_key,
+        user_id=context.user.id,
+        note=payload.note,
+        client_info=payload.client_info,
+        movement_type=MovementType.discard,
+    )
+
+
 @router.post("/stock/{batch_id}/{action}", response_model=MovementResult)
 def change_stock(
     batch_id: str,

@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
@@ -24,6 +24,7 @@ from ..schemas import (
     ProductUpdate,
     ShoppingListItem,
 )
+from ..units import sum_converted
 
 router = APIRouter(tags=["catalog"])
 
@@ -101,7 +102,18 @@ def update_batch(
 ) -> StockBatch:
     batch = load_batch(db, context.membership.household_id, batch_id)
     if batch.version != payload.expected_version:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Bestand wurde zwischenzeitlich geändert")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "version_conflict",
+                "message": "Bestand wurde zwischenzeitlich geändert",
+                "current": {
+                    "id": batch.id,
+                    "quantity": str(batch.quantity),
+                    "version": batch.version,
+                },
+            },
+        )
     values = payload.model_dump(exclude_unset=True, exclude={"expected_version"})
     if "location_id" in values:
         location = db.scalar(
@@ -184,27 +196,26 @@ def shopping_list(
     db: Session = Depends(get_db),
 ) -> list[ShoppingListItem]:
     rows = db.execute(
-        select(
-            MinStockRule,
-            Product.name,
-            func.coalesce(func.sum(StockBatch.quantity), 0),
-        )
+        select(MinStockRule, Product.name)
         .join(Product, Product.id == MinStockRule.product_id)
-        .outerjoin(
-            StockBatch,
-            (StockBatch.product_id == MinStockRule.product_id)
-            & (StockBatch.household_id == MinStockRule.household_id),
-        )
         .where(
             MinStockRule.household_id == context.membership.household_id,
             MinStockRule.active.is_(True),
         )
-        .group_by(MinStockRule.id, Product.name)
         .order_by(Product.name)
     )
     result: list[ShoppingListItem] = []
-    for rule, name, current in rows:
-        current_quantity = Decimal(current)
+    for rule, name in rows:
+        batches = db.scalars(
+            select(StockBatch).where(
+                StockBatch.household_id == context.membership.household_id,
+                StockBatch.product_id == rule.product_id,
+                StockBatch.quantity > 0,
+            )
+        )
+        current_quantity = sum_converted(
+            ((batch.quantity, batch.unit) for batch in batches), rule.unit
+        )
         if current_quantity < rule.minimum_quantity:
             result.append(
                 ShoppingListItem(

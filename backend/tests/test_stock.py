@@ -53,6 +53,12 @@ async def test_reversal_only_once(client, auth):
     )
     assert first.status_code == 200
     assert second.status_code == 409
+    assert second.json()["detail"]["code"] == "already_reversed"
+
+
+async def test_mutation_rejects_non_uuid_idempotency_key(client, auth):
+    response = await purchase(client, auth, "not-a-uuid")
+    assert response.status_code == 422
 
 
 async def test_two_clients_cannot_consume_last_stock(client, auth):
@@ -141,3 +147,20 @@ async def test_fefo_rejects_stale_batch_version(client, auth):
     )
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "version_conflict"
+
+
+async def test_fefo_discard_uses_discard_movements(client, auth):
+    batch = (await purchase(client, auth)).json()["batch"]
+    response = await client.post(
+        "/api/v1/stock/discard-fefo",
+        headers=auth[0],
+        json={
+            "product_id": auth[2]["id"],
+            "quantity": 1,
+            "unit": "l",
+            "expected_versions": {batch["id"]: batch["version"]},
+            "idempotency_key": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()[0]["movement"]["movement_type"] == "discard"

@@ -5,6 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vorrat_test
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vorrat_test
     services:
       postgres:
         image: postgres:17-alpine
@@ -18,7 +19,9 @@ jobs:
         with: { python-version: '3.12' }
       - run: pip install -e '.[dev]'
       - run: ruff check backend
+      - run: ruff format --check backend
       - run: mypy backend/app
+      - run: alembic upgrade head
       - run: pytest
   frontend:
     runs-on: ubuntu-latest

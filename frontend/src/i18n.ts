@@ -16,7 +16,30 @@ export const messages = {
     lowStock: 'Unter Mindestbestand',
     offlinePending: 'Offline vorgemerkt',
     conflicts: 'Synchronisationskonflikte'
-    ,recipes: 'Rezepte'
+    ,recipes: 'Rezepte',
+    history: 'Verlauf',
+    inventory: 'Inventur',
+    settings: 'Einstellungen',
+    logout: 'Abmelden',
+    consumeScan: 'Zum Entnehmen scannen',
+    discardScan: 'Zum Entsorgen scannen',
+    inventoryScan: 'Artikel für Inventur scannen',
+    transfer: 'Umlagern',
+    edit: 'Bearbeiten',
+    cancel: 'Abbrechen',
+    undo: 'Rückgängig',
+    saved: 'Buchung gespeichert',
+    product: 'Produkt',
+    quantity: 'Menge',
+    unit: 'Einheit',
+    location: 'Lagerort',
+    choose: 'Bitte wählen',
+    bestBefore: 'Mindesthaltbar bis',
+    newProduct: 'Neues Produkt manuell anlegen',
+    selectExistingProduct: 'Bitte ein vorhandenes Produkt auswählen oder neu anlegen.',
+    addItem: 'Artikel einbuchen',
+    food: 'Lebensmittel',
+    more: 'Mehr'
   }
 } as const
 export const t = (key: keyof typeof messages.de) => messages.de[key]

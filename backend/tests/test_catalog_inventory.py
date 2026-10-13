@@ -46,6 +46,28 @@ async def test_minimum_stock_generates_shopping_list(client, auth):
     assert shopping[0]["missing_quantity"] == "2.000"
 
 
+async def test_minimum_stock_converts_mixed_units(client, auth):
+    headers, location, product = auth
+    await client.post(
+        "/api/v1/stock/purchase",
+        headers=headers,
+        json={
+            "product_id": product["id"],
+            "location_id": location["id"],
+            "quantity": 500,
+            "unit": "ml",
+            "idempotency_key": "12121212-1212-4121-8121-121212121212",
+        },
+    )
+    await client.put(
+        f"/api/v1/products/{product['id']}/min-stock",
+        headers=headers,
+        json={"minimum_quantity": 2, "unit": "l", "active": True},
+    )
+    shopping = (await client.get("/api/v1/shopping-list", headers=headers)).json()
+    assert shopping[0]["missing_quantity"] == "1.500"
+
+
 async def test_inventory_confirmation_creates_adjustment(client, auth):
     batch = (await purchase(client, auth)).json()["batch"]
     inventory = (await client.post("/api/v1/inventory-sessions", headers=auth[0], json={})).json()
@@ -62,8 +84,71 @@ async def test_inventory_confirmation_creates_adjustment(client, auth):
     )
     assert confirmed.status_code == 200
     assert confirmed.json()[0]["movement"]["movement_type"] == "adjust"
+    replay = await client.post(
+        f"/api/v1/inventory-sessions/{inventory['session']['id']}/confirm",
+        headers=auth[0],
+        json={"idempotency_key": "66666666-6666-4666-8666-666666666666"},
+    )
+    assert replay.status_code == 200
+    assert replay.json()[0]["replayed"] is True
+    assert replay.json()[0]["movement"]["id"] == confirmed.json()[0]["movement"]["id"]
     stock = (await client.get("/api/v1/stock", headers=auth[0])).json()
     assert stock == []
+
+
+async def test_inventory_confirmation_rejects_changed_batch_atomically(client, auth):
+    batch = (await purchase(client, auth)).json()["batch"]
+    inventory = (await client.post("/api/v1/inventory-sessions", headers=auth[0], json={})).json()
+    await client.put(
+        f"/api/v1/inventory-sessions/{inventory['session']['id']}/counts",
+        headers=auth[0],
+        json={"batch_id": batch["id"], "counted_quantity": 0},
+    )
+    consumed = await client.post(
+        f"/api/v1/stock/{batch['id']}/consume",
+        headers=auth[0],
+        json={
+            "quantity": 0.25,
+            "expected_version": batch["version"],
+            "idempotency_key": "13131313-1313-4131-8131-131313131313",
+        },
+    )
+    assert consumed.status_code == 200
+    confirmed = await client.post(
+        f"/api/v1/inventory-sessions/{inventory['session']['id']}/confirm",
+        headers=auth[0],
+        json={"idempotency_key": "14141414-1414-4141-8141-141414141414"},
+    )
+    assert confirmed.status_code == 409
+    assert confirmed.json()["detail"]["code"] == "inventory_conflict"
+    stock = (await client.get("/api/v1/stock", headers=auth[0])).json()
+    assert stock[0]["quantity"] == "0.750"
+
+
+async def test_empty_inventory_confirmation_is_idempotent(client, auth):
+    inventory = (await client.post("/api/v1/inventory-sessions", headers=auth[0], json={})).json()
+    path = f"/api/v1/inventory-sessions/{inventory['session']['id']}/confirm"
+    payload = {"idempotency_key": "15151515-1515-4151-8151-151515151515"}
+    first = await client.post(path, headers=auth[0], json=payload)
+    replay = await client.post(path, headers=auth[0], json=payload)
+    conflict = await client.post(
+        path,
+        headers=auth[0],
+        json={"idempotency_key": "16161616-1616-4161-8161-161616161616"},
+    )
+    assert first.json() == replay.json() == []
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "inventory_completed"
+
+
+async def test_product_keeps_package_quantity(client, auth):
+    response = await client.patch(
+        f"/api/v1/products/{auth[2]['id']}",
+        headers=auth[0],
+        json={"package_quantity": "1 l"},
+    )
+    assert response.status_code == 200
+    assert response.json()["package_quantity"] == "1 l"
 
 
 async def test_viewer_cannot_modify_catalog(client, auth):

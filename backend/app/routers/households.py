@@ -88,7 +88,10 @@ def manageable_membership(db: Session, context: HouseholdContext, user_id: str) 
     if membership is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mitglied nicht gefunden")
     if membership.role == Role.owner:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Owner kann hier nicht geändert werden")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"code": "owner_role_locked", "message": "Owner kann hier nicht geändert werden"},
+        )
     if context.membership.role == Role.admin and membership.role == Role.admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins können keine Admins verwalten")
     return membership
