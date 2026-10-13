@@ -1,11 +1,12 @@
 import { discardConflict, flushOutbox, offlineState, queueRequest, retryConflict, type OfflineConflict } from './offline'
 
-export type Product = { id: string; name: string; brand?: string; category?: string; default_unit: string; image_url?: string; package_quantity?: string; notes?: string; barcodes: { barcode: string }[] }
+export type Product = { id: string; name: string; brand?: string; category?: string; default_unit: string; default_location_id?: string; image_url?: string; package_quantity?: string; notes?: string; barcodes: { barcode: string }[] }
 export type Batch = { id: string; product_id: string; location_id: string; quantity: string; unit: string; best_before?: string; opened_at?: string; version: number; product: Product }
 export type Location = { id: string; name: string }
 export type MovementResult = { movement: { id: string }; batch: Batch; replayed: boolean }
 export type Movement = { id: string; batch_id: string; user_id: string; product_id?: string; product_name?: string; user_name?: string; movement_type: string; quantity_delta: string; note?: string; client_info?: string; created_at: string }
-export type ShoppingItem = { product_id: string; product_name: string; current_quantity: string; minimum_quantity: string; missing_quantity: string; unit: string; source: string; recipe_id?: string }
+export type ShoppingItem = { id: string; product_id?: string; product_name: string; category?: string; free_text?: string; quantity: string; unit: string; note?: string; source: string; status: 'open' | 'checked'; checked_by_name?: string; checked_at?: string; linked_movement_id?: string; version: number; created_at: string }
+export type ShoppingCheckResult = { item: ShoppingItem; movement?: MovementResult }
 export type RecipeIngredient = { id: string; product_id: string; product_name: string; quantity: string; unit: string }
 export type Recipe = { id: string; name: string; servings: number; instructions?: string; tags: string[]; ingredients: RecipeIngredient[] }
 export type MissingIngredient = { product_id: string; product_name: string; required_quantity: string; available_quantity: string; missing_quantity: string; unit: string }
@@ -14,7 +15,7 @@ export type RecipePreferences = { preferred_tags: string[]; excluded_tags: strin
 export type InventoryCount = { batch_id: string; expected_quantity: string; expected_version: number; counted_quantity: string }
 export type InventoryDetail = { session: { id: string; location_id?: string; status: string; created_at: string }; counts: InventoryCount[] }
 export type Notification = { id: string; kind: string; message: string; read_at?: string; resolved_at?: string; created_at: string }
-export type Household = { id: string; name: string; timezone: string; expiry_warning_days: number }
+export type Household = { id: string; name: string; timezone: string; expiry_warning_days: number; shopping_check_mode: 'instant' | 'finish_trip' }
 export type Member = { user_id: string; email: string; display_name: string; role: string }
 export type QueuedResult = { queued: true; key: string }
 
@@ -136,6 +137,13 @@ export const api = {
   reverse: (movementId: string, version: number) => request<MovementResult>(`/movements/${movementId}/reverse`, { method: 'POST', body: JSON.stringify({ expected_version: version, idempotency_key: crypto.randomUUID() }) })
   ,movements: () => request<Movement[]>('/movements')
   ,shoppingList: () => request<ShoppingItem[]>('/shopping-list')
+  ,createShoppingItem: (body: object) => request<ShoppingItem>('/shopping-list', { method: 'POST', body: JSON.stringify(body) })
+  ,checkShoppingItem: (item: ShoppingItem, book_to_stock: boolean, product_id?: string) => request<ShoppingCheckResult>(`/shopping-list/${item.id}/check`, { method: 'POST', body: JSON.stringify({ expected_version: item.version, idempotency_key: crypto.randomUUID(), product_id, book_to_stock, client_info: navigator.userAgent }) })
+  ,undoShoppingItem: (itemId: string, itemVersion: number, batchVersion: number) => request<ShoppingCheckResult>(`/shopping-list/${itemId}/undo`, { method: 'POST', body: JSON.stringify({ expected_version: itemVersion, expected_batch_version: batchVersion, idempotency_key: crypto.randomUUID() }) })
+  ,finishShoppingTrip: (lines: { item: ShoppingItem; location_id?: string; best_before?: string }[]) => request<ShoppingCheckResult[]>('/shopping-list/finish', { method: 'POST', body: JSON.stringify({ lines: lines.map(({ item, location_id, best_before }) => ({ item_id: item.id, expected_version: item.version, location_id: location_id || null, best_before: best_before || null, idempotency_key: crypto.randomUUID() })) }) })
+  ,removeShoppingItem: (item: ShoppingItem) => request<ShoppingItem>(`/shopping-list/${item.id}/remove`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) })
+  ,clearCheckedShopping: () => request<void>('/shopping-list/clear-checked', { method: 'POST' })
+  ,shoppingText: () => fetch('/api/v1/shopping-list/export.txt', { headers: { Authorization: `Bearer ${state.token}`, 'X-Household-ID': state.household } }).then(response => response.text())
   ,recipes: () => request<Recipe[]>('/recipes')
   ,recipeRecommendations: (tags: string[] = [], servings?: number) => { const params = new URLSearchParams(); tags.forEach(tag => params.append('tags', tag)); if (servings) params.set('servings', String(servings)); const query = params.toString(); return request<RecipeRecommendation[]>(`/recipes/recommendations${query ? `?${query}` : ''}`) }
   ,recipePreferences: () => request<RecipePreferences>('/recipes/preferences')

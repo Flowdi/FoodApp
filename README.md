@@ -2,7 +2,7 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Phase 1 und Phase 2 vollständig
+## Stand: Phase 1, Phase 2 und Erweiterung E1 vollständig
 
 Enthalten sind:
 
@@ -23,6 +23,10 @@ Enthalten sind:
 - atomare, versionsgesicherte Inventur für Haushalt oder Lagerort mit Soll/Ist-Abgleich und `adjust`-Buchungen
 - filterbarer Buchungsverlauf inklusive Nutzer/Gerät und Excel-kompatibler UTF-8-CSV-Export
 - einheitenübergreifende Mindestbestände, automatisch abgeleitete Einkaufsliste und entprellte Warnungen
+- persistente, live synchronisierte Einkaufsliste mit Freitext, Produkt-Autovervollständigung,
+  Kategorien, Teilen und kollisionssicherem Abhaken
+- wahlweise sofortige Einbuchung beim Abhaken oder gemeinsamer, atomarer Einkaufsabschluss;
+  Einbuchungen lassen sich per Gegenbuchung rückgängig machen
 - täglicher MHD-/Mindestbestand-Job sowie individuell konfigurierbarer In-App-, SMTP- und Web-Push-Versand
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
@@ -54,6 +58,24 @@ OPENAI_MODEL=gpt-5-mini
 ```
 
 Für Anthropic werden `ANTHROPIC_API_KEY` und `ANTHROPIC_MODEL` verwendet. Ollama benötigt keinen Cloud-Schlüssel; `OLLAMA_BASE_URL` und `OLLAMA_MODEL` zeigen auf die lokale Installation. API-Schlüssel werden nie an das Frontend ausgeliefert und gehören ausschließlich in die nicht versionierte `.env`.
+
+## Einkaufsliste
+
+Die Einkaufsliste ist über die Hauptnavigation erreichbar. Einträge können einem Produkt
+zugeordnet oder als Freitext angelegt, nach Kategorie betrachtet, geteilt, abgehakt und entfernt
+werden. Mindestbestandsregeln pflegen offene Einträge automatisch: Nach dem Auffüllen verschwindet
+der automatische Eintrag wieder, manuelle Einträge werden dabei nicht überschrieben.
+
+Unter **Mehr → Beim Abhaken** stehen zwei Modi zur Verfügung:
+
+- **Sofort einbuchen:** Das Abhaken erzeugt direkt eine `purchase`-Buchung. Die Snackbar macht
+  diese Aktion mit einer unveränderlichen `reversal`-Gegenbuchung rückgängig.
+- **Erst beim Einkaufsabschluss:** Abhaken legt Artikel zunächst „in den Wagen“. **Einkauf
+  abschließen** bucht alle zugeordneten Positionen gemeinsam in einer Transaktion.
+
+Auf Smartphones stehen sichtbare Schaltflächen und Wischgesten zur Verfügung. Am PC wird die
+Liste zweispaltig mit Seitennavigation dargestellt. Tastaturkürzel: `N` neuer Listeneintrag,
+`/` Bestandssuche, `M` Spracheinstieg und `Strg+Z` für die letzte rückgängig machbare Aktion.
 
 ## Architektur
 
@@ -115,9 +137,16 @@ ruff check backend
 ruff format --check backend
 mypy backend/app
 cd frontend && npm run build
+cd frontend && npm run test:e2e
 ```
 
-Die Pflichtpfade für Idempotenz, einmaliges Storno, Einheiten, atomare Inventur und konkurrierende Entnahme sind angelegt. UUID-Idempotency-Keys sowie stabile 409-Fehlercodes werden an der API-Grenze geprüft. Für echte Parallelitätsaussagen muss der Konkurrenztest gegen PostgreSQL laufen; SQLite ignoriert Zeilensperren und ist nur für schnelle lokale Tests gedacht. GitHub Actions startet deshalb eine leere PostgreSQL-Datenbank, führt `alembic upgrade head` aus und startet danach die Tests.
+Die Pflichtpfade für Idempotenz, einmaliges Storno, Einheiten, atomare Inventur, konkurrierende
+Entnahme und doppeltes Einkaufslisten-Abhaken sind angelegt. UUID-Idempotency-Keys sowie stabile
+409-Fehlercodes werden an der API-Grenze geprüft. Playwright prüft die Kernansicht in einem
+Pixel-7- und einem 1440×900-Desktop-Viewport. Für echte Parallelitätsaussagen muss der
+Konkurrenztest gegen PostgreSQL laufen; SQLite ignoriert Zeilensperren und ist nur für schnelle
+lokale Tests gedacht. GitHub Actions startet deshalb eine leere PostgreSQL-Datenbank, führt
+`alembic upgrade head` aus und startet danach die Tests.
 
 ## Backup und Wiederherstellung
 
@@ -149,6 +178,10 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 4. **Offline & Multi-Device (abgeschlossen):** FEFO, vollständige Outbox-Synchronisation mit Konfliktcenter, SSE-Live-Updates, Filter/Sortierung und Open-Food-Facts-Cache.
 5. **Phase 2 – Rezeptkern (abgeschlossen):** Rezeptbibliothek mit mobiler UI, Zutaten/Portionen/Tags, Einheitenumrechnung, deterministischem Verfügbarkeits-/MHD-/Präferenz-Scoring und Einkaufsliste.
 6. **Phase 2 – KI-Ranking (abgeschlossen):** Austauschbares `RecipeRanker`-Interface für OpenAI, Anthropic und Ollama, persönliche Präferenzen, validierte strukturierte Antworten und deterministischer Fallback.
+7. **E1 – Einkaufsliste (abgeschlossen):** Persistente Liste, Mindestbestandsautomatik,
+   Sofort-/Einkaufsabschluss-Modus, Live-Sync, Rückgängig sowie responsive Touch- und PC-UI.
+8. **E2–E4 (offen):** Gemeinsame KI-/Sprachebene, PWA-Sprachstart und Kassenbon-Erkennung
+   werden in getrennten Pull Requests umgesetzt.
 
 ## Lizenz
 
