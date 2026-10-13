@@ -5,7 +5,11 @@ export type Batch = { id: string; product_id: string; location_id: string; quant
 export type Location = { id: string; name: string }
 export type MovementResult = { movement: { id: string }; batch: Batch; replayed: boolean }
 export type Movement = { id: string; batch_id: string; user_id: string; product_id?: string; product_name?: string; user_name?: string; movement_type: string; quantity_delta: string; note?: string; client_info?: string; created_at: string }
-export type ShoppingItem = { product_id: string; product_name: string; current_quantity: string; minimum_quantity: string; missing_quantity: string; unit: string }
+export type ShoppingItem = { product_id: string; product_name: string; current_quantity: string; minimum_quantity: string; missing_quantity: string; unit: string; source: string; recipe_id?: string }
+export type RecipeIngredient = { id: string; product_id: string; product_name: string; quantity: string; unit: string }
+export type Recipe = { id: string; name: string; servings: number; instructions?: string; tags: string[]; ingredients: RecipeIngredient[] }
+export type MissingIngredient = { product_id: string; product_name: string; required_quantity: string; available_quantity: string; missing_quantity: string; unit: string }
+export type RecipeRecommendation = { recipe: Recipe; score: number; availability_score: number; expiry_score: number; preference_score: number; missing_ingredients: MissingIngredient[]; explanation: string }
 export type InventoryCount = { batch_id: string; expected_quantity: string; counted_quantity: string }
 export type InventoryDetail = { session: { id: string; location_id?: string; status: string; created_at: string }; counts: InventoryCount[] }
 export type Notification = { id: string; kind: string; message: string; read_at?: string; resolved_at?: string; created_at: string }
@@ -129,6 +133,12 @@ export const api = {
   reverse: (movementId: string, version: number) => request<MovementResult>(`/movements/${movementId}/reverse`, { method: 'POST', body: JSON.stringify({ expected_version: version, idempotency_key: crypto.randomUUID() }) })
   ,movements: () => request<Movement[]>('/movements')
   ,shoppingList: () => request<ShoppingItem[]>('/shopping-list')
+  ,recipes: () => request<Recipe[]>('/recipes')
+  ,recipeRecommendations: (tags: string[] = [], servings?: number) => { const params = new URLSearchParams(); tags.forEach(tag => params.append('tags', tag)); if (servings) params.set('servings', String(servings)); const query = params.toString(); return request<RecipeRecommendation[]>(`/recipes/recommendations${query ? `?${query}` : ''}`) }
+  ,createRecipe: (body: object) => request<Recipe>('/recipes', { method: 'POST', body: JSON.stringify(body) })
+  ,updateRecipe: (recipeId: string, body: object) => request<Recipe>(`/recipes/${recipeId}`, { method: 'PATCH', body: JSON.stringify(body) })
+  ,deleteRecipe: (recipeId: string) => request<void>(`/recipes/${recipeId}`, { method: 'DELETE' })
+  ,addRecipeToShoppingList: (recipeId: string, servings?: number) => request<void>(`/recipes/${recipeId}/shopping-list${servings ? `?servings=${servings}` : ''}`, { method: 'POST' })
   ,notifications: () => request<Notification[]>('/notifications')
   ,notificationPreferences: () => request<{ channels: string[] }>('/notifications/preferences')
   ,setNotificationPreferences: (channels: string[]) => request<{ channels: string[] }>('/notifications/preferences', { method: 'PUT', body: JSON.stringify({ channels }) })

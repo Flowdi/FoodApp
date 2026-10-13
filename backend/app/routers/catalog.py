@@ -6,7 +6,15 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..dependencies import HouseholdContext, household_context, require_admin
-from ..models import AuditLog, MinStockRule, Product, ProductBarcode, StockBatch, StorageLocation
+from ..models import (
+    AuditLog,
+    MinStockRule,
+    Product,
+    ProductBarcode,
+    ShoppingListEntry,
+    StockBatch,
+    StorageLocation,
+)
 from ..schemas import (
     BatchRead,
     BatchUpdate,
@@ -208,4 +216,23 @@ def shopping_list(
                     unit=rule.unit,
                 )
             )
+    recipe_rows = db.execute(
+        select(ShoppingListEntry, Product.name)
+        .join(Product, Product.id == ShoppingListEntry.product_id)
+        .where(ShoppingListEntry.household_id == context.membership.household_id)
+        .order_by(Product.name)
+    )
+    for entry, name in recipe_rows:
+        result.append(
+            ShoppingListItem(
+                product_id=entry.product_id,
+                product_name=name,
+                current_quantity=Decimal("0"),
+                minimum_quantity=entry.quantity,
+                missing_quantity=entry.quantity,
+                unit=entry.unit,
+                source="recipe",
+                recipe_id=entry.recipe_id,
+            )
+        )
     return result

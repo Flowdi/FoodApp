@@ -2,7 +2,7 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Phase 1 funktionsvollständig
+## Stand: Phase 1 vollständig, Phase 2 gestartet
 
 Enthalten sind:
 
@@ -27,7 +27,19 @@ Enthalten sind:
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
 
-Damit ist der im Auftrag definierte Funktionsumfang von Phase 1 umgesetzt. Phase 2 bleibt bewusst auf Schema, Einheitenmodul und Roadmap beschränkt. Zusätzliche Härtung wie E-Mail-Verifikation, zentralisiertes Monitoring und regelmäßige automatisierte Restore-Proben ist vor einem öffentlichen Betrieb weiterhin empfehlenswert.
+Damit ist der im Auftrag definierte Funktionsumfang von Phase 1 umgesetzt. Der erste Phase-2-Meilenstein ergänzt eine haushaltsbezogene Rezeptbibliothek, ein deterministisches Empfehlungs-Scoring und die Übernahme fehlender Zutaten auf die Einkaufsliste. Zusätzliche Härtung wie E-Mail-Verifikation, zentralisiertes Monitoring und regelmäßige automatisierte Restore-Proben ist vor einem öffentlichen Betrieb weiterhin empfehlenswert.
+
+## Phase 2: Rezepte
+
+Rezepte verknüpfen vorhandene Produkte mit Mengen und Einheiten, Portionenzahl, Zubereitung und Tags. Die API rechnet kompatible Einheiten (`g`/`kg`, `ml`/`l`) um und bewertet jedes Rezept nachvollziehbar nach drei Faktoren:
+
+- 60 % Anteil verfügbarer Zutaten
+- 25 % Nutzung bald ablaufender Vorräte
+- 15 % Übereinstimmung mit gewünschten Tags
+
+Die Ergebnisliste enthält die Teilwerte, eine deutsche Begründung und exakt fehlende Zutaten. Über **Zur Einkaufsliste** werden diese haushaltsbezogen gespeichert. Rezeptmutationen sind rollen- und mandantengeschützt und werden im Audit-Log erfasst.
+
+Die nächste Ausbaustufe ergänzt das austauschbare LLM-Ranking für OpenAI, Anthropic und Ollama. Das deterministische Vor-Scoring bleibt dabei verbindliche Grundlage und funktionsfähiger Fallback; Anbieter-Schlüssel werden ausschließlich über Umgebungsvariablen gelesen.
 
 ## Architektur
 
@@ -121,7 +133,8 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 2. **Haushaltsworkflows (abgeschlossen):** Produktbearbeitung/Audit, Umlagerung, Inventur, Verlauf/CSV, Mindestbestand/Einkaufsliste, Scheduler sowie Push/E-Mail.
 3. **Kontosicherheit & Zusammenarbeit (abgeschlossen):** Refresh-Rotation, Logout, Login-Rate-Limit, Passwort-Reset, Haushaltseinladungen, Mitgliederverwaltung und persönliche Benachrichtigungskanäle.
 4. **Offline & Multi-Device (abgeschlossen):** FEFO, vollständige Outbox-Synchronisation mit Konfliktcenter, SSE-Live-Updates, Filter/Sortierung und Open-Food-Facts-Cache.
-5. **Phase 2 (nur Roadmap):** Rezeptbibliothek. Ein deterministisches Python-Pre-Scoring bewertet Verfügbarkeit und MHD-Dringlichkeit; ein austauschbares `RecipeRanker`-Interface erlaubt OpenAI, Anthropic oder Ollama ausschließlich über Umgebungsvariablen. Fehlende Zutaten fließen in die Einkaufsliste. Das Schema und `backend/app/units.py` sind vorbereitet, es gibt noch keine Rezept-UI und keine KI-Anbindung.
+5. **Phase 2 – Rezeptkern (abgeschlossen):** Rezeptbibliothek mit mobiler UI, Zutaten/Portionen/Tags, Einheitenumrechnung, deterministischem Verfügbarkeits-/MHD-/Präferenz-Scoring und Einkaufsliste.
+6. **Phase 2 – KI-Ranking (als Nächstes):** Austauschbares `RecipeRanker`-Interface für OpenAI, Anthropic oder Ollama, ausschließlich über Umgebungsvariablen konfiguriert. Das deterministische Vor-Scoring bleibt Fallback und fachliche Grundlage.
 
 ## Lizenz
 

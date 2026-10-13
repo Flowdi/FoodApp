@@ -279,6 +279,9 @@ class Recipe(Base):
     servings: Mapped[int] = mapped_column(default=2)
     instructions: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    ingredients: Mapped[list["RecipeIngredient"]] = relationship(
+        cascade="all, delete-orphan", order_by="RecipeIngredient.id"
+    )
 
 
 class RecipeIngredient(Base):
@@ -288,3 +291,22 @@ class RecipeIngredient(Base):
     product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
     unit: Mapped[str] = mapped_column(String(20))
+    product: Mapped[Product] = relationship()
+
+
+class ShoppingListEntry(Base):
+    __tablename__ = "shopping_list_entries"
+    __table_args__ = (UniqueConstraint("household_id", "product_id", "recipe_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    product_id: Mapped[str] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    recipe_id: Mapped[str | None] = mapped_column(
+        ForeignKey("recipes.id", ondelete="CASCADE"), index=True
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    unit: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

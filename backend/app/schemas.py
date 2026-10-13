@@ -227,6 +227,66 @@ class ShoppingListItem(BaseModel):
     minimum_quantity: Decimal
     missing_quantity: Decimal
     unit: str
+    source: str = "minimum_stock"
+    recipe_id: str | None = None
+
+
+class RecipeIngredientWrite(BaseModel):
+    product_id: str
+    quantity: Quantity
+    unit: str = Field(min_length=1, max_length=20)
+
+
+class RecipeIngredientRead(ORMModel):
+    id: str
+    product_id: str
+    quantity: Decimal
+    unit: str
+    product_name: str
+
+
+class RecipeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=180)
+    servings: int = Field(default=2, ge=1, le=100)
+    instructions: str | None = None
+    tags: list[str] = []
+    ingredients: list[RecipeIngredientWrite] = Field(min_length=1)
+
+
+class RecipeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=180)
+    servings: int | None = Field(default=None, ge=1, le=100)
+    instructions: str | None = None
+    tags: list[str] | None = None
+    ingredients: list[RecipeIngredientWrite] | None = Field(default=None, min_length=1)
+
+
+class RecipeRead(ORMModel):
+    id: str
+    name: str
+    servings: int
+    instructions: str | None
+    tags: list[str]
+    ingredients: list[RecipeIngredientRead]
+
+
+class MissingIngredient(BaseModel):
+    product_id: str
+    product_name: str
+    required_quantity: Decimal
+    available_quantity: Decimal
+    missing_quantity: Decimal
+    unit: str
+
+
+class RecipeRecommendation(BaseModel):
+    recipe: RecipeRead
+    score: float
+    availability_score: float
+    expiry_score: float
+    preference_score: float
+    missing_ingredients: list[MissingIngredient]
+    explanation: str
 
 
 class InventoryStartRequest(BaseModel):

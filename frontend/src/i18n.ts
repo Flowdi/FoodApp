@@ -16,6 +16,7 @@ export const messages = {
     lowStock: 'Unter Mindestbestand',
     offlinePending: 'Offline vorgemerkt',
     conflicts: 'Synchronisationskonflikte'
+    ,recipes: 'Rezepte'
   }
 } as const
 export const t = (key: keyof typeof messages.de) => messages.de[key]
