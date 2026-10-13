@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from .models import MovementType, Role
 
 Quantity = Annotated[Decimal, Field(gt=0, decimal_places=3)]
+RecipeTag = Annotated[str, Field(min_length=1, max_length=50)]
 
 
 class ORMModel(BaseModel):
@@ -101,6 +102,11 @@ class MemberRoleUpdate(BaseModel):
 
 class NotificationPreferences(BaseModel):
     channels: list[str]
+
+
+class RecipePreferences(BaseModel):
+    preferred_tags: list[RecipeTag] = Field(default=[], max_length=20)
+    excluded_tags: list[RecipeTag] = Field(default=[], max_length=20)
 
 
 class UserRead(ORMModel):
@@ -287,6 +293,7 @@ class RecipeRecommendation(BaseModel):
     preference_score: float
     missing_ingredients: list[MissingIngredient]
     explanation: str
+    ranking_source: str = "deterministic"
 
 
 class InventoryStartRequest(BaseModel):

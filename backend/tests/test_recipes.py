@@ -3,6 +3,8 @@ from datetime import date, timedelta
 from sqlalchemy import select
 
 from backend.app.models import Membership, Role
+from backend.app.schemas import RecipeRecommendation
+from backend.app.services.recipe_rankers import RankedRecipe, apply_llm_ranking
 
 
 async def create_recipe(client, auth):
@@ -100,3 +102,58 @@ async def test_viewer_can_read_but_not_create_recipes(client, auth):
         },
     )
     assert response.status_code == 403
+
+
+async def test_recipe_preferences_filter_and_score_recommendations(client, auth):
+    await create_recipe(client, auth)
+    preferences = await client.put(
+        "/api/v1/recipes/preferences",
+        headers=auth[0],
+        json={"preferred_tags": ["Frühstück"], "excluded_tags": []},
+    )
+    assert preferences.status_code == 200
+    result = (await client.get("/api/v1/recipes/recommendations", headers=auth[0])).json()
+    assert result[0]["preference_score"] == 1
+    await client.put(
+        "/api/v1/recipes/preferences",
+        headers=auth[0],
+        json={"preferred_tags": [], "excluded_tags": ["Vegetarisch"]},
+    )
+    excluded = await client.get("/api/v1/recipes/recommendations", headers=auth[0])
+    assert excluded.json() == []
+
+
+def test_llm_ranking_rejects_unknown_and_duplicate_recipe_ids() -> None:
+    first = RecipeRecommendation.model_validate(
+        {
+            "recipe": {
+                "id": "first",
+                "name": "Erstes",
+                "servings": 2,
+                "instructions": None,
+                "tags": [],
+                "ingredients": [],
+            },
+            "score": 0.8,
+            "availability_score": 1,
+            "expiry_score": 0,
+            "preference_score": 0,
+            "missing_ingredients": [],
+            "explanation": "deterministisch",
+        }
+    )
+    second = first.model_copy(
+        update={"recipe": first.recipe.model_copy(update={"id": "second", "name": "Zweites"})}
+    )
+    result = apply_llm_ranking(
+        [first, second],
+        [
+            RankedRecipe("second", "KI-Begründung"),
+            RankedRecipe("unknown", "Ignorieren"),
+            RankedRecipe("second", "Duplikat"),
+        ],
+        "openai",
+    )
+    assert [item.recipe.id for item in result] == ["second", "first"]
+    assert result[0].ranking_source == "openai"
+    assert result[1].ranking_source == "deterministic"

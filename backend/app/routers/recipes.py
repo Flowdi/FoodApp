@@ -1,9 +1,12 @@
+import logging
 from collections.abc import Sequence
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..database import get_db
 from ..dependencies import HouseholdContext, household_context, require_writer
 from ..models import (
@@ -17,13 +20,16 @@ from ..models import (
 from ..schemas import (
     RecipeCreate,
     RecipeIngredientWrite,
+    RecipePreferences,
     RecipeRead,
     RecipeRecommendation,
     RecipeUpdate,
 )
+from ..services.recipe_rankers import apply_llm_ranking, configured_ranker
 from ..services.recipes import recipe_query, recipe_read, recommend_recipes
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
+logger = logging.getLogger(__name__)
 
 
 def load_recipe(db: Session, household_id: str, recipe_id: str) -> Recipe:
@@ -111,13 +117,47 @@ def recommendations(
     household_id = context.membership.household_id
     household = db.get(Household, household_id)
     warning_days = household.expiry_warning_days if household else 3
-    return recommend_recipes(
+    preferences = RecipePreferences.model_validate(context.membership.recipe_preferences or {})
+    preferred_tags = {tag.casefold() for tag in preferences.preferred_tags}
+    preferred_tags.update(tag.casefold() for tag in tags)
+    result = recommend_recipes(
         db,
         household_id,
-        {tag.casefold() for tag in tags},
+        preferred_tags,
+        {tag.casefold() for tag in preferences.excluded_tags},
         servings,
         warning_days,
     )
+    ranker = configured_ranker(get_settings())
+    if ranker is None or not result:
+        return result
+    try:
+        return apply_llm_ranking(result, ranker.rank(result), ranker.name)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("Recipe ranking provider failed; using deterministic order: %s", exc)
+        return result
+
+
+@router.get("/preferences", response_model=RecipePreferences)
+def get_preferences(
+    context: HouseholdContext = Depends(household_context),
+) -> RecipePreferences:
+    return RecipePreferences.model_validate(context.membership.recipe_preferences or {})
+
+
+@router.put("/preferences", response_model=RecipePreferences)
+def update_preferences(
+    payload: RecipePreferences,
+    context: HouseholdContext = Depends(household_context),
+    db: Session = Depends(get_db),
+) -> RecipePreferences:
+    normalized = RecipePreferences(
+        preferred_tags=sorted({tag.strip() for tag in payload.preferred_tags if tag.strip()}),
+        excluded_tags=sorted({tag.strip() for tag in payload.excluded_tags if tag.strip()}),
+    )
+    context.membership.recipe_preferences = normalized.model_dump()
+    db.commit()
+    return normalized
 
 
 @router.get("/{recipe_id}", response_model=RecipeRead)
@@ -201,6 +241,7 @@ def add_missing_to_shopping_list(
     recommendation = recommend_recipes(
         db,
         household_id,
+        set(),
         set(),
         servings,
         household.expiry_warning_days if household else 3,

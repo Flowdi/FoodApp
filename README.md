@@ -2,7 +2,7 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Phase 1 vollständig, Phase 2 gestartet
+## Stand: Phase 1 und Phase 2 vollständig
 
 Enthalten sind:
 
@@ -27,7 +27,7 @@ Enthalten sind:
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
 
-Damit ist der im Auftrag definierte Funktionsumfang von Phase 1 umgesetzt. Der erste Phase-2-Meilenstein ergänzt eine haushaltsbezogene Rezeptbibliothek, ein deterministisches Empfehlungs-Scoring und die Übernahme fehlender Zutaten auf die Einkaufsliste. Zusätzliche Härtung wie E-Mail-Verifikation, zentralisiertes Monitoring und regelmäßige automatisierte Restore-Proben ist vor einem öffentlichen Betrieb weiterhin empfehlenswert.
+Damit ist der im Auftrag definierte Funktionsumfang von Phase 1 und Phase 2 umgesetzt. Die Rezeptbibliothek kombiniert nachvollziehbares Python-Scoring mit einem optionalen, austauschbaren LLM-Re-Ranking. Zusätzliche Härtung wie E-Mail-Verifikation, zentralisiertes Monitoring und regelmäßige automatisierte Restore-Proben ist vor einem öffentlichen Betrieb weiterhin empfehlenswert.
 
 ## Phase 2: Rezepte
 
@@ -37,9 +37,23 @@ Rezepte verknüpfen vorhandene Produkte mit Mengen und Einheiten, Portionenzahl,
 - 25 % Nutzung bald ablaufender Vorräte
 - 15 % Übereinstimmung mit gewünschten Tags
 
-Die Ergebnisliste enthält die Teilwerte, eine deutsche Begründung und exakt fehlende Zutaten. Über **Zur Einkaufsliste** werden diese haushaltsbezogen gespeichert. Rezeptmutationen sind rollen- und mandantengeschützt und werden im Audit-Log erfasst.
+Die Ergebnisliste enthält die Teilwerte, eine deutsche Begründung und exakt fehlende Zutaten. Über **Zur Einkaufsliste** werden diese haushaltsbezogen gespeichert. Persönliche bevorzugte und ausgeschlossene Tags werden pro Mitglied gespeichert. Rezeptmutationen sind rollen- und mandantengeschützt und werden im Audit-Log erfasst.
 
-Die nächste Ausbaustufe ergänzt das austauschbare LLM-Ranking für OpenAI, Anthropic und Ollama. Das deterministische Vor-Scoring bleibt dabei verbindliche Grundlage und funktionsfähiger Fallback; Anbieter-Schlüssel werden ausschließlich über Umgebungsvariablen gelesen.
+Das optionale `RecipeRanker`-Interface unterstützt OpenAI, Anthropic und ein lokales Ollama. Das LLM erhält ausschließlich die vorbewerteten Rezeptkandidaten, darf sie umsortieren und kurze Begründungen liefern. Unbekannte oder doppelte Rezept-IDs werden verworfen. Bei Timeout, ungültigem JSON, Providerfehlern oder fehlenden API-Schlüsseln fällt die API ohne Funktionsverlust auf das deterministische Ranking zurück.
+
+Provider in `.env` auswählen:
+
+```dotenv
+# Ohne externen Dienst (Standard)
+RECIPE_RANKER_PROVIDER=deterministic
+
+# Alternativ: openai, anthropic oder ollama
+RECIPE_RANKER_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5-mini
+```
+
+Für Anthropic werden `ANTHROPIC_API_KEY` und `ANTHROPIC_MODEL` verwendet. Ollama benötigt keinen Cloud-Schlüssel; `OLLAMA_BASE_URL` und `OLLAMA_MODEL` zeigen auf die lokale Installation. API-Schlüssel werden nie an das Frontend ausgeliefert und gehören ausschließlich in die nicht versionierte `.env`.
 
 ## Architektur
 
@@ -134,7 +148,7 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 3. **Kontosicherheit & Zusammenarbeit (abgeschlossen):** Refresh-Rotation, Logout, Login-Rate-Limit, Passwort-Reset, Haushaltseinladungen, Mitgliederverwaltung und persönliche Benachrichtigungskanäle.
 4. **Offline & Multi-Device (abgeschlossen):** FEFO, vollständige Outbox-Synchronisation mit Konfliktcenter, SSE-Live-Updates, Filter/Sortierung und Open-Food-Facts-Cache.
 5. **Phase 2 – Rezeptkern (abgeschlossen):** Rezeptbibliothek mit mobiler UI, Zutaten/Portionen/Tags, Einheitenumrechnung, deterministischem Verfügbarkeits-/MHD-/Präferenz-Scoring und Einkaufsliste.
-6. **Phase 2 – KI-Ranking (als Nächstes):** Austauschbares `RecipeRanker`-Interface für OpenAI, Anthropic oder Ollama, ausschließlich über Umgebungsvariablen konfiguriert. Das deterministische Vor-Scoring bleibt Fallback und fachliche Grundlage.
+6. **Phase 2 – KI-Ranking (abgeschlossen):** Austauschbares `RecipeRanker`-Interface für OpenAI, Anthropic und Ollama, persönliche Präferenzen, validierte strukturierte Antworten und deterministischer Fallback.
 
 ## Lizenz
 

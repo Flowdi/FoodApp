@@ -25,6 +25,16 @@ class Settings(BaseSettings):
     public_url: str = "https://localhost"
     login_rate_limit_attempts: int = 5
     login_rate_limit_window_seconds: int = 300
+    recipe_ranker_provider: str = "deterministic"
+    recipe_ranker_timeout_seconds: float = 15
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-5"
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    ollama_model: str = "qwen3:4b"
+    ollama_base_url: str = "http://host.docker.internal:11434"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -48,6 +48,7 @@ def recommend_recipes(
     db: Session,
     household_id: str,
     preferred_tags: set[str],
+    excluded_tags: set[str],
     servings: int | None,
     expiry_warning_days: int,
 ) -> list[RecipeRecommendation]:
@@ -66,6 +67,9 @@ def recommend_recipes(
     recommendations: list[RecipeRecommendation] = []
     today = date.today()
     for recipe in recipes:
+        normalized_tags = {tag.casefold() for tag in recipe.tags}
+        if normalized_tags & excluded_tags:
+            continue
         scale = Decimal(servings or recipe.servings) / Decimal(recipe.servings)
         ingredient_ratios: list[Decimal] = []
         expiry_values: list[float] = []
@@ -100,7 +104,6 @@ def recommend_recipes(
 
         availability = float(sum(ingredient_ratios) / len(ingredient_ratios))
         expiry = max(expiry_values, default=0.0)
-        normalized_tags = {tag.casefold() for tag in recipe.tags}
         preference = (
             len(normalized_tags & preferred_tags) / len(preferred_tags) if preferred_tags else 0.0
         )

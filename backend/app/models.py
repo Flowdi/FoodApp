@@ -72,6 +72,9 @@ class Membership(Base):
     notification_channels: Mapped[list[str]] = mapped_column(
         JSON, default=lambda: ["in_app", "email", "push"]
     )
+    recipe_preferences: Mapped[dict[str, object]] = mapped_column(
+        JSON, default=lambda: {"preferred_tags": [], "excluded_tags": []}
+    )
 
 
 class StorageLocation(Base):

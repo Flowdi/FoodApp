@@ -30,7 +30,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="Vorrat API", version="0.4.0", docs_url="/docs", lifespan=lifespan)
+app = FastAPI(title="Vorrat API", version="0.5.0", docs_url="/docs", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
