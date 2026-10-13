@@ -18,6 +18,10 @@ export type Notification = { id: string; kind: string; message: string; read_at?
 export type Household = { id: string; name: string; timezone: string; expiry_warning_days: number; shopping_check_mode: 'instant' | 'finish_trip' }
 export type Member = { user_id: string; email: string; display_name: string; role: string }
 export type QueuedResult = { queued: true; key: string }
+export type VoiceIntent = 'add_to_stock' | 'consume' | 'discard' | 'add_to_shopping' | 'remove_from_shopping' | 'check_shopping' | 'query_stock' | 'unknown'
+export type VoiceAction = { intent: VoiceIntent; product_id?: string; product_name: string; quantity?: string; unit?: string; confidence: number; choices: { id: string; name: string }[]; expected_versions: Record<string, number>; requires_confirmation: boolean }
+export type VoiceInterpretation = { transcript: string; actions: VoiceAction[]; parser: 'rules' | 'llm' }
+export type VoicePreferences = { auto_confirm_shopping: boolean; speech_output: boolean }
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message) }
@@ -53,6 +57,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(message || 'Aktion fehlgeschlagen', response.status)
   }
   if (response.status === 204) return undefined as T
+  return response.json()
+}
+
+async function upload<T>(path: string, body: FormData): Promise<T> {
+  const response = await fetch(`/api/v1${path}`, {
+    method: 'POST',
+    headers: { ...(state.token && { Authorization: `Bearer ${state.token}` }), ...(state.household && { 'X-Household-ID': state.household }) },
+    body
+  })
+  if (response.status === 401 && await renewAccessToken()) return upload<T>(path, body)
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: 'Netzwerkfehler' }))
+    const detail = payload.detail
+    throw new ApiError(typeof detail === 'string' ? detail : detail?.message || 'Aktion fehlgeschlagen', response.status)
+  }
   return response.json()
 }
 
@@ -144,6 +163,11 @@ export const api = {
   ,removeShoppingItem: (item: ShoppingItem) => request<ShoppingItem>(`/shopping-list/${item.id}/remove`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) })
   ,clearCheckedShopping: () => request<void>('/shopping-list/clear-checked', { method: 'POST' })
   ,shoppingText: () => fetch('/api/v1/shopping-list/export.txt', { headers: { Authorization: `Bearer ${state.token}`, 'X-Household-ID': state.household } }).then(response => response.text())
+  ,interpretVoice: (text: string) => request<VoiceInterpretation>('/voice/interpret', { method: 'POST', body: JSON.stringify({ text }) })
+  ,executeVoice: (action: VoiceAction, location_id?: string, idempotency_key = crypto.randomUUID()) => request<{ message: string; result_type: string }>('/voice/execute', { method: 'POST', body: JSON.stringify({ action, location_id: location_id || null, idempotency_key }) })
+  ,transcribeVoice: (audio: Blob) => { const form = new FormData(); form.append('audio', audio, 'voice.webm'); return upload<{ text: string }>('/voice/transcribe', form) }
+  ,voicePreferences: () => request<VoicePreferences>('/voice/preferences')
+  ,setVoicePreferences: (body: VoicePreferences) => request<VoicePreferences>('/voice/preferences', { method: 'PUT', body: JSON.stringify(body) })
   ,recipes: () => request<Recipe[]>('/recipes')
   ,recipeRecommendations: (tags: string[] = [], servings?: number) => { const params = new URLSearchParams(); tags.forEach(tag => params.append('tags', tag)); if (servings) params.set('servings', String(servings)); const query = params.toString(); return request<RecipeRecommendation[]>(`/recipes/recommendations${query ? `?${query}` : ''}`) }
   ,recipePreferences: () => request<RecipePreferences>('/recipes/preferences')

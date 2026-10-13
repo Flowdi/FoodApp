@@ -76,6 +76,9 @@ class Membership(Base):
     recipe_preferences: Mapped[dict[str, object]] = mapped_column(
         JSON, default=lambda: {"preferred_tags": [], "excluded_tags": []}
     )
+    voice_preferences: Mapped[dict[str, object]] = mapped_column(
+        JSON, default=lambda: {"auto_confirm_shopping": False, "speech_output": False}
+    )
 
 
 class StorageLocation(Base):
@@ -113,6 +116,49 @@ class ProductBarcode(Base):
         ForeignKey("products.id", ondelete="CASCADE"), index=True
     )
     barcode: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+
+
+class ProductAlias(Base):
+    __tablename__ = "product_aliases"
+    __table_args__ = (UniqueConstraint("household_id", "normalized_alias"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    product_id: Mapped[str] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    alias: Mapped[str] = mapped_column(String(180))
+    normalized_alias: Mapped[str] = mapped_column(String(180), index=True)
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    usage_count: Mapped[int] = mapped_column(default=0)
+
+
+class AIUsageLog(Base):
+    __tablename__ = "ai_usage_logs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(30))
+    feature: Mapped[str] = mapped_column(String(40), index=True)
+    input_units: Mapped[int | None]
+    output_units: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class VoiceExecution(Base):
+    __tablename__ = "voice_executions"
+    __table_args__ = (UniqueConstraint("household_id", "idempotency_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(36))
+    response: Mapped[dict[str, object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ProductLookupCache(Base):

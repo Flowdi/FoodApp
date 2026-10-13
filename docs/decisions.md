@@ -22,3 +22,22 @@
   später ergänzt werden, ohne die Bestands-Outbox zu duplizieren.
 - Smartphone und Desktop verwenden dieselbe Vue-Ansicht. Unter 1024 px bleibt die Navigation
   unten, ab 1024 px wird sie zur Seitenleiste und die Einkaufsliste zweispaltig.
+
+## E2 – Sprache und gemeinsame KI-Schicht
+
+- Sprachaktionen werden zuerst deterministisch geparst. Nur wenn keine Regel greift, wird der
+  optionale LLM-Provider aufgerufen; der Kernpfad bleibt daher ohne Cloud-Dienst nutzbar.
+- `app/ai` kapselt strukturierte Text- und künftige Bildantworten für OpenAI, Anthropic und
+  Ollama. Providerantworten werden als Pydantic-Modelle validiert und genau einmal mit dem
+  Validierungsfehler zur Reparatur wiederholt.
+- KI-Aufrufe werden haushaltsbezogen in `ai_usage_logs` gezählt. Das Tageslimit wird vor dem
+  externen Aufruf geprüft; API-Schlüssel werden niemals Teil einer Frontend-Antwort.
+- `product_aliases` ist bereits das haushaltsbezogene Synonymwörterbuch für exakte und unscharfe
+  Produktauflösung. Mehrdeutige Treffer bleiben unbestätigt und werden in der UI auswählbar.
+- Audio wird nicht als Domänenobjekt persistiert. Faster Whisper erhält eine automatisch
+  gelöschte temporäre Datei, Cloud-STT nur den unmittelbaren Upload.
+- Bestandsaktionen benötigen immer eine sichtbare Bestätigung. Die optionale Drei-Sekunden-
+  Automatik ist auf hochsichere Einkaufslisten-Ergänzungen begrenzt und lokal standardmäßig aus.
+- Jede bestätigte Aktion besitzt einen client-generierten UUID-Schlüssel. `voice_executions`
+  macht auch Listenaktionen und Abfragen bei Netzwerkwiederholungen replay-sicher; Bestandsdaten
+  werden weiterhin ausschließlich durch die bestehenden transaktionalen Services verändert.

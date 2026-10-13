@@ -18,7 +18,7 @@ from ..models import (
 )
 from ..schemas import MovementResult
 from ..units import sum_converted
-from .stock import apply_delta
+from .stock import apply_delta, existing_result
 
 
 def item_query(household_id: str) -> Select[tuple[ShoppingListItem]]:
@@ -76,7 +76,11 @@ def create_purchase(
     user_id: str,
     idempotency_key: str,
     client_info: str | None,
+    note: str = "Einkaufsliste",
 ) -> MovementResult:
+    replay = existing_result(db, household_id, idempotency_key)
+    if replay:
+        return replay
     location = resolve_location(db, household_id, product, location_id)
     batch = StockBatch(
         household_id=household_id,
@@ -97,7 +101,7 @@ def create_purchase(
         delta=quantity,
         expected_version=1,
         idempotency_key=idempotency_key,
-        note="Einkaufsliste",
+        note=note,
         client_info=client_info,
         commit=False,
     )

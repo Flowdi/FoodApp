@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test-vorrat.db")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-long-enough")
+os.environ.setdefault("STT_PROVIDER", "none")
 
 import httpx
 import pytest

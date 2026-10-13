@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { BrowserMultiFormatReader } from '@zxing/browser'
-import { api, type Batch, type Household, type InventoryDetail, type Location, type Member, type Movement, type MovementResult, type Notification, type OfflineConflict, type Product, type QueuedResult, type RecipeRecommendation, type ShoppingItem } from './api'
+import { api, type Batch, type Household, type InventoryDetail, type Location, type Member, type Movement, type MovementResult, type Notification, type OfflineConflict, type Product, type QueuedResult, type RecipeRecommendation, type ShoppingItem, type VoiceAction } from './api'
 import { t } from './i18n'
 
 type View = 'stock' | 'shopping' | 'voice' | 'receipt' | 'recipes' | 'history' | 'inventory' | 'more'
@@ -30,6 +30,15 @@ const selectedProduct = ref(''), selectedLocation = ref(''), quantity = ref(1), 
 const productSearch = ref('')
 const shoppingProductSearch = ref(''), shoppingProductId = ref(''), shoppingText = ref(''), shoppingQuantity = ref(1), shoppingUnit = ref('piece')
 const shoppingUndo = ref<{ itemId: string; itemVersion: number; batchVersion: number } | null>(null)
+const voiceText = ref(''), voiceActions = ref<VoiceAction[]>([]), voiceRecording = ref(false)
+const voiceLevel = ref(0), voiceStatus = ref('Bereit'), voiceResult = ref('')
+const voiceAutoConfirm = ref(false), voiceSpeechOutput = ref(false)
+const voiceCountdown = ref(0)
+let voiceRecorder: MediaRecorder | null = null
+let voiceStream: MediaStream | null = null
+let voiceMeter: number | undefined
+let voiceTimeout: number | undefined
+let voiceAutoTimer: number | undefined
 const swipeStarts = new Map<string, number>()
 const lastMovements = ref<{ id: string; version: number }[]>([])
 const shoppingProductIds = computed(() => new Set(shopping.value.filter(item => item.status === 'open').map(item => item.product_id)))
@@ -59,10 +68,10 @@ const batchMap = computed(() => new Map(batches.value.map(batch => [batch.id, ba
 const movementNames: Record<string, string> = { purchase: 'Eingebucht', consume: 'Entnommen', discard: 'Entsorgt', adjust: 'Inventur', transfer: 'Ungelagert', reversal: 'Storniert' }
 
 async function load() {
-  const [stock, productList, locationList, movementList, shoppingList, notificationList, householdData, memberList, preferences, recommendations, recipePreferences] = await Promise.all([
-    api.stock(), api.products(), api.locations(), api.movements(), api.shoppingList(), api.notifications(), api.household(), api.members(), api.notificationPreferences(), api.recipeRecommendations([], recipeServings.value), api.recipePreferences()
+  const [stock, productList, locationList, movementList, shoppingList, notificationList, householdData, memberList, preferences, recommendations, recipePreferences, voicePreferences] = await Promise.all([
+    api.stock(), api.products(), api.locations(), api.movements(), api.shoppingList(), api.notifications(), api.household(), api.members(), api.notificationPreferences(), api.recipeRecommendations([], recipeServings.value), api.recipePreferences(), api.voicePreferences()
   ])
-  batches.value = stock; products.value = productList; locations.value = locationList; movements.value = movementList; shopping.value = shoppingList; notifications.value = notificationList; household.value = householdData; members.value = memberList; notificationChannels.value = preferences.channels; recipeRecommendations.value = recommendations; recipeTags.value = recipePreferences.preferred_tags.join(', '); excludedRecipeTags.value = recipePreferences.excluded_tags.join(', ')
+  batches.value = stock; products.value = productList; locations.value = locationList; movements.value = movementList; shopping.value = shoppingList; notifications.value = notificationList; household.value = householdData; members.value = memberList; notificationChannels.value = preferences.channels; recipeRecommendations.value = recommendations; recipeTags.value = recipePreferences.preferred_tags.join(', '); excludedRecipeTags.value = recipePreferences.excluded_tags.join(', '); voiceAutoConfirm.value = voicePreferences.auto_confirm_shopping; voiceSpeechOutput.value = voicePreferences.speech_output
 }
 async function refreshRecipes() { try { recipeRecommendations.value = await api.recipeRecommendations([], recipeServings.value) } catch(e) { error.value = (e as Error).message } }
 async function saveRecipePreferences() { try { await api.setRecipePreferences({ preferred_tags: recipeTags.value.split(',').map(tag => tag.trim()).filter(Boolean), excluded_tags: excludedRecipeTags.value.split(',').map(tag => tag.trim()).filter(Boolean) }); await refreshRecipes() } catch(e) { error.value = (e as Error).message } }
@@ -140,8 +149,34 @@ let eventsController: AbortController | null = null
 function startLive() { eventsController?.abort(); eventsController = api.watchEvents(() => load().catch(() => undefined)) }
 function markOffline() { online.value = false }
 function keyboardShortcuts(event: KeyboardEvent) { const editing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement; if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); if (shoppingUndo.value) undoShopping(); else undo(); return } if (editing) return; if (event.key === '/') { event.preventDefault(); activeView.value = 'stock'; setTimeout(() => document.querySelector<HTMLInputElement>('#stock-search')?.focus()) } else if (event.key.toLowerCase() === 'n') { activeView.value = 'shopping'; setTimeout(() => document.querySelector<HTMLInputElement>('#shopping-product')?.focus()) } else if (event.key.toLowerCase() === 'm') activeView.value = 'voice' }
+function clearVoiceTimers() { if (voiceMeter) window.clearInterval(voiceMeter); if (voiceTimeout) window.clearTimeout(voiceTimeout); if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); voiceMeter = undefined; voiceTimeout = undefined; voiceAutoTimer = undefined }
+function stopVoice() { if (voiceRecorder?.state === 'recording') voiceRecorder.stop(); voiceStream?.getTracks().forEach(track => track.stop()); voiceStream = null; voiceRecording.value = false; clearVoiceTimers() }
+async function interpretVoice() { if (!voiceText.value.trim()) return; busy.value = true; error.value = ''; voiceResult.value = ''; try { const draft = await api.interpretVoice(voiceText.value.trim()); voiceActions.value = draft.actions; voiceStatus.value = draft.parser === 'rules' ? 'Lokal erkannt' : 'Mit KI erkannt'; scheduleVoiceAutoConfirm() } catch(e) { error.value = (e as Error).message; voiceStatus.value = 'Nicht erkannt' } finally { busy.value = false } }
+async function startVoice() {
+  error.value = ''; voiceResult.value = ''; voiceActions.value = []
+  if (!navigator.mediaDevices?.getUserMedia || !('MediaRecorder' in window)) { error.value = 'Dieser Browser unterstützt keine Audioaufnahme. Nutze die Texteingabe.'; return }
+  try {
+    voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const chunks: Blob[] = []
+    voiceRecorder = new MediaRecorder(voiceStream)
+    voiceRecorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
+    voiceRecorder.onstop = async () => { voiceStatus.value = 'Wird erkannt …'; try { const result = await api.transcribeVoice(new Blob(chunks, { type: voiceRecorder?.mimeType || 'audio/webm' })); voiceText.value = result.text; await interpretVoice() } catch(e) { error.value = `${(e as Error).message}. Du kannst den Text unten eingeben oder die Browser-Erkennung nutzen.`; voiceStatus.value = 'Transkription fehlgeschlagen' } }
+    const context = new AudioContext(), analyser = context.createAnalyser(), source = context.createMediaStreamSource(voiceStream), data = new Uint8Array(analyser.fftSize)
+    source.connect(analyser); let heardSpeech = false, lastSound = Date.now()
+    voiceMeter = window.setInterval(() => { analyser.getByteTimeDomainData(data); const rms = Math.sqrt(data.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / data.length); voiceLevel.value = Math.min(1, rms * 8); if (rms > 0.035) { heardSpeech = true; lastSound = Date.now() } else if (heardSpeech && Date.now() - lastSound > 1500) stopVoice() }, 100)
+    voiceTimeout = window.setTimeout(stopVoice, 15000); voiceRecorder.start(); voiceRecording.value = true; voiceStatus.value = 'Ich höre zu …'
+  } catch(e) { error.value = 'Mikrofonzugriff wurde nicht erlaubt. Nutze die Texteingabe oder Browser-Erkennung.'; voiceStatus.value = 'Mikrofon nicht verfügbar' }
+}
+function browserSpeech() { const SpeechRecognition = (window as unknown as { SpeechRecognition?: new () => { lang: string; interimResults: boolean; onresult: (event: { results: { 0: { transcript: string } }[] }) => void; onerror: () => void; start: () => void } }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: new () => { lang: string; interimResults: boolean; onresult: (event: { results: { 0: { transcript: string } }[] }) => void; onerror: () => void; start: () => void } }).webkitSpeechRecognition; if (!SpeechRecognition) { error.value = 'Die Browser-Spracherkennung ist hier nicht verfügbar.'; return } const recognition = new SpeechRecognition(); recognition.lang = 'de-DE'; recognition.interimResults = false; recognition.onresult = event => { voiceText.value = event.results[0][0].transcript; void interpretVoice() }; recognition.onerror = () => { error.value = 'Die Browser-Spracherkennung ist fehlgeschlagen.' }; recognition.start(); voiceStatus.value = 'Browser hört zu …' }
+async function saveVoicePreferences() { try { const saved = await api.setVoicePreferences({ auto_confirm_shopping: voiceAutoConfirm.value, speech_output: voiceSpeechOutput.value }); voiceAutoConfirm.value = saved.auto_confirm_shopping; voiceSpeechOutput.value = saved.speech_output; scheduleVoiceAutoConfirm() } catch(e) { error.value = (e as Error).message } }
+function setVoiceAutoConfirm(value: boolean) { voiceAutoConfirm.value = value; void saveVoicePreferences() }
+function setVoiceSpeechOutput(value: boolean) { voiceSpeechOutput.value = value; void saveVoicePreferences() }
+function scheduleVoiceAutoConfirm() { if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); const action = voiceActions.value[0]; if (!voiceAutoConfirm.value || voiceActions.value.length !== 1 || action?.intent !== 'add_to_shopping' || action.confidence < .9) { voiceCountdown.value = 0; return } voiceCountdown.value = 3; voiceAutoTimer = window.setInterval(() => { voiceCountdown.value -= 1; if (voiceCountdown.value <= 0) { if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); void confirmVoiceAction(action) } }, 1000) }
+function chooseVoiceProduct(action: VoiceAction, productId: string) { const product = products.value.find(item => item.id === productId); action.product_id = productId || undefined; if (product) { action.product_name = product.name; action.unit ||= product.default_unit } }
+async function confirmVoiceAction(action: VoiceAction) { if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); voiceCountdown.value = 0; busy.value = true; error.value = ''; try { const result = await api.executeVoice(action, selectedLocation.value || locations.value[0]?.id); voiceResult.value = result.message; voiceActions.value = voiceActions.value.filter(item => item !== action); if (result.result_type !== 'query') await load(); if (voiceSpeechOutput.value && result.result_type === 'query' && 'speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(result.message)) } catch(e) { error.value = (e as Error).message } finally { busy.value = false } }
+function discardVoiceAction(action: VoiceAction) { voiceActions.value = voiceActions.value.filter(item => item !== action); scheduleVoiceAutoConfirm() }
 onMounted(async () => { window.addEventListener('online', syncOffline); window.addEventListener('offline', markOffline); window.addEventListener('keydown', keyboardShortcuts); await refreshOffline(); if (loggedIn.value) { try { await acceptPendingInvitation(); await syncOffline(); startLive() } catch(e) { error.value = (e as Error).message } } })
-onUnmounted(() => { eventsController?.abort(); window.removeEventListener('online', syncOffline); window.removeEventListener('offline', markOffline); window.removeEventListener('keydown', keyboardShortcuts) })
+onUnmounted(() => { stopVoice(); eventsController?.abort(); window.removeEventListener('online', syncOffline); window.removeEventListener('offline', markOffline); window.removeEventListener('keydown', keyboardShortcuts) })
 </script>
 
 <template>
@@ -193,7 +228,29 @@ onUnmounted(() => { eventsController?.abort(); window.removeEventListener('onlin
     </template>
 
     <template v-else-if="activeView === 'voice'">
-      <section class="empty panel feature-preview"><span>●</span><h2>Spracheingabe folgt in E2</h2><p>Die Navigation und der responsive Einstieg sind vorbereitet. Aufnahme und Befehlsparser werden im nächsten Pull Request ergänzt.</p></section>
+      <section class="voice-workspace">
+        <div class="voice-capture panel">
+          <p class="eyebrow">SPRACHEINGABE</p><h2>Was soll ich eintragen?</h2><p class="muted">Zum Beispiel: „Setze zwei Packungen Nudeln auf die Einkaufsliste.“</p>
+          <button class="voice-record" :class="{ recording: voiceRecording }" :aria-pressed="voiceRecording" :aria-label="voiceRecording ? 'Aufnahme beenden' : 'Sprachaufnahme starten'" @click="voiceRecording ? stopVoice() : startVoice()"><span>●</span>{{ voiceRecording ? 'Aufnahme beenden' : 'Sprechen' }}</button>
+          <div class="voice-level" role="meter" aria-label="Mikrofonpegel" :aria-valuenow="Math.round(voiceLevel * 100)"><span :style="{ width: `${Math.max(4, voiceLevel * 100)}%` }"></span></div><p class="voice-status" aria-live="polite">{{ voiceStatus }}<template v-if="voiceRecording"> · stoppt nach 1,5 s Stille, spätestens nach 15 s</template></p>
+          <button class="ghost voice-browser" @click="browserSpeech">Browser-Spracherkennung verwenden</button>
+          <form class="voice-text" @submit.prevent="interpretVoice"><label>Erkannter oder eingegebener Text<textarea v-model="voiceText" rows="3" placeholder="Befehl eingeben …"></textarea></label><button class="primary" :disabled="busy || !voiceText.trim()">Befehl prüfen</button></form>
+          <label class="voice-option"><input type="checkbox" :checked="voiceAutoConfirm" @change="setVoiceAutoConfirm(($event.target as HTMLInputElement).checked)"> Sichere Einkaufslisten-Einträge nach 3 Sekunden automatisch bestätigen</label>
+          <label class="voice-option"><input type="checkbox" :checked="voiceSpeechOutput" @change="setVoiceSpeechOutput(($event.target as HTMLInputElement).checked)"> Antworten auf Bestandsfragen vorlesen</label>
+        </div>
+        <div class="voice-results">
+          <p v-if="voiceResult" class="success" aria-live="polite">✓ {{ voiceResult }}</p>
+          <article v-for="action in voiceActions" :key="`${action.intent}-${action.product_name}`" class="voice-action">
+            <div class="voice-action-head"><span>{{ Math.round(action.confidence * 100) }}% sicher</span><strong>{{ { add_to_stock:'Zum Vorrat hinzufügen', consume:'Verbrauchen', discard:'Entsorgen', add_to_shopping:'Auf die Einkaufsliste', remove_from_shopping:'Von der Einkaufsliste entfernen', check_shopping:'Auf der Einkaufsliste abhaken', query_stock:'Bestand abfragen', unknown:'Unklar' }[action.intent] }}</strong></div>
+            <label>Produkt<select :value="action.product_id || ''" @change="chooseVoiceProduct(action, ($event.target as HTMLSelectElement).value)"><option value="">{{ action.product_name }} (Freitext)</option><option v-for="product in products" :key="product.id" :value="product.id">{{ product.name }}</option></select></label>
+            <div v-if="!['remove_from_shopping','check_shopping','query_stock'].includes(action.intent)" class="row"><label>Menge<input v-model="action.quantity" type="number" min="0.001" step="0.001" placeholder="gesamter Bestand"></label><label>Einheit<select v-model="action.unit"><option value="piece">Stück</option><option value="pack">Packung</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label></div>
+            <p v-if="!action.product_id && !['add_to_shopping','remove_from_shopping'].includes(action.intent)" class="voice-warning">Bitte ein vorhandenes Produkt auswählen.</p>
+            <p v-if="voiceCountdown" class="voice-countdown">Wird in {{ voiceCountdown }} s bestätigt …</p>
+            <div class="voice-action-buttons"><button @click="discardVoiceAction(action)">Verwerfen</button><button class="primary" :disabled="busy || (!action.product_id && action.intent !== 'add_to_shopping')" @click="confirmVoiceAction(action)">Bestätigen</button></div>
+          </article>
+          <div v-if="!voiceActions.length && !voiceResult" class="voice-help"><h3>Unterstützte Befehle</h3><p>Vorrat hinzufügen, verbrauchen oder entsorgen · Einkaufslisten-Einträge anlegen, abhaken oder entfernen · Bestand abfragen</p></div>
+        </div>
+      </section>
     </template>
 
     <template v-else-if="activeView === 'receipt'">

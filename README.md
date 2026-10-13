@@ -2,7 +2,7 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Phase 1, Phase 2 und Erweiterung E1 vollständig
+## Stand: Phase 1, Phase 2 sowie Erweiterungen E1 und E2 vollständig
 
 Enthalten sind:
 
@@ -58,6 +58,30 @@ OPENAI_MODEL=gpt-5-mini
 ```
 
 Für Anthropic werden `ANTHROPIC_API_KEY` und `ANTHROPIC_MODEL` verwendet. Ollama benötigt keinen Cloud-Schlüssel; `OLLAMA_BASE_URL` und `OLLAMA_MODEL` zeigen auf die lokale Installation. API-Schlüssel werden nie an das Frontend ausgeliefert und gehören ausschließlich in die nicht versionierte `.env`.
+
+## Spracheingabe (E2)
+
+Der mittlere Navigationspunkt **Sprechen** nimmt höchstens 15 Sekunden Audio auf und beendet die
+Aufnahme nach 1,5 Sekunden Stille. Das Audio wird direkt an den Server übertragen, dort nur im
+Arbeitsspeicher bzw. in einer automatisch gelöschten temporären Datei verarbeitet und nicht
+gespeichert. Alternativ stehen Texteingabe und – falls der Browser sie anbietet – die Web Speech
+API zur Verfügung.
+
+Der regelbasierte Parser erkennt deutsche Befehle für Vorrat, Verbrauch, Entsorgung,
+Einkaufsliste und Bestandsabfragen, einschließlich mehrerer Artikel, Zahlwörtern und halben
+Mengen. Vor jeder Bestandsänderung erscheint eine editierbare Bestätigungskarte. Nur sichere
+Einkaufslisten-Einträge können auf Wunsch nach drei Sekunden automatisch bestätigt werden.
+
+Die lokale Spracherkennung über Faster Whisper ist der Standard (`STT_PROVIDER=faster-whisper`,
+`STT_MODEL=small`). Das Modell wird beim ersten Einsatz lokal geladen; Audiodaten verlassen den
+Server dabei nicht.
+
+Alternativ kann `STT_PROVIDER=openai` mit `STT_API_KEY`, `STT_BASE_URL` und `STT_MODEL`
+verwendet werden. Für mehrdeutige Befehle lässt sich der gemeinsame strukturierte KI-Provider
+mit `LLM_PROVIDER=openai|anthropic|ollama`, `LLM_MODEL`, `LLM_API_KEY` und `LLM_BASE_URL`
+aktivieren. Antworten werden mit Pydantic validiert und einmal repariert; pro Haushalt gilt das
+konfigurierbare Tageslimit `LLM_DAILY_LIMIT_PER_HOUSEHOLD`. Schlüssel bleiben ausschließlich im
+Backend. Ohne LLM bleibt der lokale Parser vollständig nutzbar.
 
 ## Einkaufsliste
 
@@ -180,7 +204,8 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 6. **Phase 2 – KI-Ranking (abgeschlossen):** Austauschbares `RecipeRanker`-Interface für OpenAI, Anthropic und Ollama, persönliche Präferenzen, validierte strukturierte Antworten und deterministischer Fallback.
 7. **E1 – Einkaufsliste (abgeschlossen):** Persistente Liste, Mindestbestandsautomatik,
    Sofort-/Einkaufsabschluss-Modus, Live-Sync, Rückgängig sowie responsive Touch- und PC-UI.
-8. **E2–E4 (offen):** Gemeinsame KI-/Sprachebene, PWA-Sprachstart und Kassenbon-Erkennung
+8. **E2 (abgeschlossen):** Aufnahme mit Pegelanzeige und automatischem Stopp, lokale deutsche Intent-Erkennung, editierbare Bestätigungskarten, optionale STT-/LLM-Provider sowie serverseitige Limits und Nutzungsprotokolle.
+9. **E3–E4 (offen):** Erweiterte Sprachbedienung und Kassenbon-Erkennung.
    werden in getrennten Pull Requests umgesetzt.
 
 ## Lizenz
