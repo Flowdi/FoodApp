@@ -21,7 +21,7 @@ export type QueuedResult = { queued: true; key: string }
 export type VoiceIntent = 'add_to_stock' | 'consume' | 'discard' | 'add_to_shopping' | 'remove_from_shopping' | 'check_shopping' | 'query_stock' | 'unknown'
 export type VoiceAction = { intent: VoiceIntent; product_id?: string; product_name: string; quantity?: string; unit?: string; confidence: number; choices: { id: string; name: string }[]; expected_versions: Record<string, number>; requires_confirmation: boolean }
 export type VoiceInterpretation = { transcript: string; actions: VoiceAction[]; parser: 'rules' | 'llm' }
-export type VoicePreferences = { auto_confirm_shopping: boolean; speech_output: boolean }
+export type VoicePreferences = { auto_confirm_shopping: boolean; speech_output: boolean; start_listening_on_launch: boolean | null }
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message) }
@@ -118,7 +118,7 @@ async function streamEvents(onChange: () => void, signal: AbortSignal) {
 }
 
 export const api = {
-  authenticated: () => Boolean(state.token),
+  authenticated: () => Boolean(state.token || state.refresh),
   async login(email: string, password: string) {
     const tokens = await request<{ access_token: string; refresh_token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     state.token = tokens.access_token; state.refresh = tokens.refresh_token; localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh)

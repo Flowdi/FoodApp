@@ -1,5 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+ARG APP_NAME=Vorrat
+ENV APP_NAME=$APP_NAME
 COPY package*.json ./
 RUN npm install
 COPY . .

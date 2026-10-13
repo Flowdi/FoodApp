@@ -41,3 +41,20 @@
 - Jede bestätigte Aktion besitzt einen client-generierten UUID-Schlüssel. `voice_executions`
   macht auch Listenaktionen und Abfragen bei Netzwerkwiederholungen replay-sicher; Bestandsdaten
   werden weiterhin ausschließlich durch die bestehenden transaktionalen Services verändert.
+
+## E3 – Android-Sprachstart der PWA
+
+- Der App-Name wird zur Build-Zeit aus `APP_NAME` in Manifest und Dokumenttitel geschrieben. Eine
+  Umbenennung erfordert deshalb einen neuen Frontend-Build und eine erneute Installation der PWA.
+- `/voice` und `/?mode=voice` sind gleichwertige direkte Einstiegspunkte. Normale installierte
+  App-Starts aktivieren Sprache nur im Standalone-Modus; Browser-Besuche auf `/` beginnen nicht
+  unerwartet mit einer Aufnahme.
+- `start_listening_on_launch = null` bedeutet den geräteabhängigen Standard (mobil an, PC aus).
+  Eine explizite Auswahl wird als persönliche Membership-Präferenz serverseitig gespeichert.
+- Vor dem ersten Mikrofon-Prompt erscheint eine Erklärung. Verweigert der Browser einen Start
+  ohne Nutzerinteraktion, ersetzt ein bildschirmfüllender Touch-Fallback den stillen Fehler.
+- Web-PWAs registrieren kein eigenes Wake Word. E3 nutzt ausschließlich den vom Betriebssystem
+  angebotenen App-Start und die Manifest-Shortcuts; native Assistant-App-Actions bleiben außerhalb
+  des Umfangs.
+- Lighthouse 11.7.1 bleibt für den CI-Check gepinnt, weil diese Version noch die PWA-Kategorie
+  inklusive Installierbarkeits-, Splashscreen- und Maskable-Icon-Audits bereitstellt.

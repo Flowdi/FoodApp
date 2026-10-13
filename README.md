@@ -2,7 +2,7 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Phase 1, Phase 2 sowie Erweiterungen E1 und E2 vollständig
+## Stand: Phase 1, Phase 2 sowie Erweiterungen E1 bis E3 vollständig
 
 Enthalten sind:
 
@@ -15,6 +15,7 @@ Enthalten sind:
 - Idempotency-Key je Schreibvorgang, pessimistische Zeilensperre plus Optimistic Locking (`version`)
 - Browser-Barcode-Scan (EAN/UPC via ZXing) zum Einbuchen, Entnehmen, Entsorgen und Zählen, manueller Fallback und haushaltsbezogen gecachter Open-Food-Facts-Lookup inklusive Packungsgröße und Produktbild
 - installierbare Vue-3-PWA in deutscher, i18n-fähiger Oberfläche; responsiv und mit Dark Mode
+- Android-Sprachstart, direkte Sprachroute und Launcher-Kurzbefehle für Sprache, Einkaufsliste, Kassenbon und Bestand
 - vollständige IndexedDB-Outbox mit automatischem Reconnect-Versand und Konfliktcenter
 - geräteübergreifende Live-Aktualisierung über authentifizierte Server-Sent Events mit Polling-Fallback
 - automatische FEFO-Entnahme und -Entsorgung über mehrere Chargen in einer DB-Transaktion
@@ -153,6 +154,24 @@ npm run dev
 
 Die Vite-Entwicklung leitet `/api` an `127.0.0.1:8000` weiter.
 
+## Sprachstart mit Hey Google
+
+1. Vorrat in Chrome auf Android öffnen und über **Zum Startbildschirm hinzufügen** beziehungsweise **App installieren** als PWA installieren. Ein normaler Browser-Tab reicht für den App-Sprachstart nicht aus.
+2. In Vorrat unter **Sprechen** die Option **Beim App-Start sofort zuhören** aktivieren. Auf Mobilgeräten ist sie standardmäßig an, auf PCs aus.
+3. Beim ersten Start erklärt Vorrat den Mikrofonzugriff. Diesen in Chrome erlauben. Android zeigt während der Aufnahme seinen Mikrofonindikator; Vorrat beendet die Aufnahme bei Stille oder nach 15 Sekunden und gibt das Mikrofon sofort frei.
+4. Google Assistant oder Gemini mit „Hey Google, öffne Vorrat“ starten. Ist der Bildschirm gesperrt, muss Android je nach Gerät, Assistent- und Sperrbildschirm-Einstellung zuerst entsperrt werden. Diese Einschränkung wird vom Betriebssystem vorgegeben.
+
+Alternativ öffnet die URL `/voice` beziehungsweise `/?mode=voice` direkt die Sprachansicht. Im Android-Launcher stehen nach der Installation außerdem die Kurzbefehle **Sprechen**, **Einkaufsliste**, **Kassenbon scannen** und **Bestand** zur Verfügung. Die rotierende, standardmäßig 30 Tage gültige Refresh-Token-Sitzung sorgt dafür, dass ein Sprachstart nicht bei jedem Aufruf erneut am Login endet.
+
+Falls der Start nicht funktioniert:
+
+- Prüfen, ob wirklich die installierte PWA und nicht nur ein Browser-Tab geöffnet wird.
+- In den Android-App-Informationen beziehungsweise Chrome-Website-Einstellungen den Mikrofonzugriff erlauben. Blockiert der Browser den automatischen Start, erscheint **Tippen zum Sprechen**.
+- Prüfen, ob Assistant/Gemini auf dem Sperrbildschirm Apps öffnen darf.
+- Bei mehreren ähnlich benannten Apps `APP_NAME` in `.env` eindeutig setzen, das Frontend neu bauen und die PWA neu installieren. `name` und `short_name` des Manifests verwenden diesen Wert.
+
+Direkte Assistentenbefehle wie „Hey Google, setze Milch auf die Vorrat-Liste“, ohne die App zu öffnen, gehören nicht zu E3: Web-PWAs dürfen kein dauerhaftes Wake Word registrieren. Eine native Android-Integration mit App Actions oder eigenem Wake-Word-Dienst bleibt eine mögliche spätere Erweiterung und ist bewusst nicht implementiert.
+
 ## Tests und Qualität
 
 ```bash
@@ -161,6 +180,7 @@ ruff check backend
 ruff format --check backend
 mypy backend/app
 cd frontend && npm run build
+cd frontend && npm run test:pwa
 cd frontend && npm run test:e2e
 ```
 
@@ -205,8 +225,9 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 7. **E1 – Einkaufsliste (abgeschlossen):** Persistente Liste, Mindestbestandsautomatik,
    Sofort-/Einkaufsabschluss-Modus, Live-Sync, Rückgängig sowie responsive Touch- und PC-UI.
 8. **E2 (abgeschlossen):** Aufnahme mit Pegelanzeige und automatischem Stopp, lokale deutsche Intent-Erkennung, editierbare Bestätigungskarten, optionale STT-/LLM-Provider sowie serverseitige Limits und Nutzungsprotokolle.
-9. **E3–E4 (offen):** Erweiterte Sprachbedienung und Kassenbon-Erkennung.
-   werden in getrennten Pull Requests umgesetzt.
+9. **E3 (abgeschlossen):** Installierbarer, konfigurierbar benannter Android-Sprachstart mit
+   direkter Route, Mikrofon-Onboarding, Touch-Fallback und Manifest-Kurzbefehlen.
+10. **E4 (offen):** Kassenbon-Erkennung wird in einem getrennten Pull Request umgesetzt.
 
 ## Lizenz
 

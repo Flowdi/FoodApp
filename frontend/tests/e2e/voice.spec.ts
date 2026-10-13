@@ -15,6 +15,10 @@ async function mockApi(page: Page) {
     if (path === '/api/v1/households/current') return json({ id: 'household-1', name: 'Zuhause', timezone: 'Europe/Berlin', expiry_warning_days: 3, shopping_check_mode: 'instant' })
     if (path === '/api/v1/notifications/preferences') return json({ channels: ['in_app'] })
     if (path === '/api/v1/recipes/preferences') return json({ preferred_tags: [], excluded_tags: [] })
+    if (path === '/api/v1/voice/preferences') {
+      if (route.request().method() === 'PUT') return json(JSON.parse(route.request().postData() || '{}'))
+      return json({ auto_confirm_shopping: false, speech_output: false, start_listening_on_launch: true })
+    }
     if (path === '/api/v1/voice/interpret') return json({ transcript: 'Setze zwei Milch auf die Einkaufsliste', parser: 'rules', actions: [{ intent: 'add_to_shopping', product_id: 'product-1', product_name: 'Milch', quantity: '2', unit: 'l', confidence: .96, choices: [], expected_versions: {}, requires_confirmation: true }] })
     if (path === '/api/v1/voice/execute') return json({ message: 'Milch steht auf der Einkaufsliste', result_type: 'shopping' })
     if (path === '/api/v1/events') return route.fulfill({ status: 204 })
@@ -45,4 +49,28 @@ test('voice layout adapts to desktop', async ({ page }, testInfo) => {
   const capture = await page.locator('.voice-capture').boundingBox()
   const results = await page.locator('.voice-results').boundingBox()
   expect(results?.x).toBeGreaterThan(capture?.x || 0)
+})
+
+test('direct voice route shows tap fallback when microphone permission is denied', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('voice_permission_explained', 'true')
+    const denied = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError'))
+    if (navigator.mediaDevices) Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { configurable: true, value: denied })
+    else Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: denied } })
+  })
+  await page.goto('/voice')
+
+  await expect(page.getByRole('heading', { name: 'Sprechen' })).toBeVisible()
+  const fallback = page.getByRole('button', { name: 'Tippen zum Sprechen' })
+  await expect(fallback).toBeVisible()
+  const box = await fallback.boundingBox()
+  expect(box?.height).toBeGreaterThanOrEqual(44)
+})
+
+test('first direct voice start explains microphone access', async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem('voice_permission_explained'))
+  await page.goto('/?mode=voice')
+
+  await expect(page.getByRole('heading', { name: 'Mikrofon für den Sprachstart' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Mikrofon erlauben und sprechen' })).toBeVisible()
 })

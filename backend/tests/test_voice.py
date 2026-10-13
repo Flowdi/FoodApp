@@ -123,11 +123,16 @@ async def test_alias_fraction_tenant_boundary_and_role_check(
     preferences = await client.put(
         "/api/v1/voice/preferences",
         headers=headers,
-        json={"auto_confirm_shopping": True, "speech_output": True},
+        json={
+            "auto_confirm_shopping": True,
+            "speech_output": True,
+            "start_listening_on_launch": True,
+        },
     )
     assert preferences.json() == {
         "auto_confirm_shopping": True,
         "speech_output": True,
+        "start_listening_on_launch": True,
     }
 
     forged = await client.post(

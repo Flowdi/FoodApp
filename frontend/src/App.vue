@@ -8,9 +8,15 @@ type View = 'stock' | 'shopping' | 'voice' | 'receipt' | 'recipes' | 'history' |
 type IngredientDraft = { product_id: string; quantity: number; unit: string }
 type ScanMode = 'purchase' | 'consume' | 'discard' | 'inventory'
 
+const appName = __APP_NAME__
 const loggedIn = ref(api.authenticated())
 const email = ref('demo@example.com'), password = ref('demo-password')
 const query = new URLSearchParams(window.location.search)
+const requestedMode = window.location.pathname.replace(/\/+$/, '') === '/voice' ? 'voice' : query.get('mode')
+const initialView: View = requestedMode === 'shopping' || requestedMode === 'voice' || requestedMode === 'receipt' || requestedMode === 'stock' ? requestedMode : 'stock'
+const explicitVoiceLaunch = requestedMode === 'voice'
+const mobileDevice = window.matchMedia('(max-width: 767px)').matches
+const standaloneDisplay = window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
 const resetToken = ref(query.get('reset_token') || '')
 const inviteToken = ref(query.get('invite') || '')
 const resetPassword = ref(''), resetComplete = ref(false), invitationLink = ref('')
@@ -20,7 +26,7 @@ const movements = ref<Movement[]>([]), shopping = ref<ShoppingItem[]>([])
 const recipeRecommendations = ref<RecipeRecommendation[]>([]), recipeTags = ref(''), excludedRecipeTags = ref(''), recipeServings = ref<number | undefined>()
 const notifications = ref<Notification[]>([])
 const household = ref<Household | null>(null), members = ref<Member[]>([]), notificationChannels = ref<string[]>([])
-const activeView = ref<View>('stock'), search = ref(''), busy = ref(false), error = ref('')
+const activeView = ref<View>(initialView), search = ref(''), busy = ref(false), error = ref('')
 const notice = ref(''), locationFilter = ref(''), categoryFilter = ref(''), expiryFilter = ref(false), shortageFilter = ref(false), sortBy = ref('expiry')
 const historyType = ref(''), historyProduct = ref(''), historyUser = ref(''), historyStart = ref(''), historyEnd = ref(''), pendingOffline = ref(0), conflicts = ref<OfflineConflict[]>([]), online = ref(navigator.onLine)
 const showAdd = ref(false), scanning = ref(false), inventory = ref<InventoryDetail | null>(null)
@@ -32,13 +38,16 @@ const shoppingProductSearch = ref(''), shoppingProductId = ref(''), shoppingText
 const shoppingUndo = ref<{ itemId: string; itemVersion: number; batchVersion: number } | null>(null)
 const voiceText = ref(''), voiceActions = ref<VoiceAction[]>([]), voiceRecording = ref(false)
 const voiceLevel = ref(0), voiceStatus = ref('Bereit'), voiceResult = ref('')
-const voiceAutoConfirm = ref(false), voiceSpeechOutput = ref(false)
+const voiceAutoConfirm = ref(false), voiceSpeechOutput = ref(false), voiceStartOnLaunch = ref<boolean | null>(null)
+const voicePermissionIntro = ref(false), voiceLaunchFallback = ref(false)
 const voiceCountdown = ref(0)
 let voiceRecorder: MediaRecorder | null = null
 let voiceStream: MediaStream | null = null
+let voiceAudioContext: AudioContext | null = null
 let voiceMeter: number | undefined
 let voiceTimeout: number | undefined
 let voiceAutoTimer: number | undefined
+let voiceLaunchHandled = false
 const swipeStarts = new Map<string, number>()
 const lastMovements = ref<{ id: string; version: number }[]>([])
 const shoppingProductIds = computed(() => new Set(shopping.value.filter(item => item.status === 'open').map(item => item.product_id)))
@@ -71,7 +80,7 @@ async function load() {
   const [stock, productList, locationList, movementList, shoppingList, notificationList, householdData, memberList, preferences, recommendations, recipePreferences, voicePreferences] = await Promise.all([
     api.stock(), api.products(), api.locations(), api.movements(), api.shoppingList(), api.notifications(), api.household(), api.members(), api.notificationPreferences(), api.recipeRecommendations([], recipeServings.value), api.recipePreferences(), api.voicePreferences()
   ])
-  batches.value = stock; products.value = productList; locations.value = locationList; movements.value = movementList; shopping.value = shoppingList; notifications.value = notificationList; household.value = householdData; members.value = memberList; notificationChannels.value = preferences.channels; recipeRecommendations.value = recommendations; recipeTags.value = recipePreferences.preferred_tags.join(', '); excludedRecipeTags.value = recipePreferences.excluded_tags.join(', '); voiceAutoConfirm.value = voicePreferences.auto_confirm_shopping; voiceSpeechOutput.value = voicePreferences.speech_output
+  batches.value = stock; products.value = productList; locations.value = locationList; movements.value = movementList; shopping.value = shoppingList; notifications.value = notificationList; household.value = householdData; members.value = memberList; notificationChannels.value = preferences.channels; recipeRecommendations.value = recommendations; recipeTags.value = recipePreferences.preferred_tags.join(', '); excludedRecipeTags.value = recipePreferences.excluded_tags.join(', '); voiceAutoConfirm.value = voicePreferences.auto_confirm_shopping; voiceSpeechOutput.value = voicePreferences.speech_output; voiceStartOnLaunch.value = voicePreferences.start_listening_on_launch ?? null
 }
 async function refreshRecipes() { try { recipeRecommendations.value = await api.recipeRecommendations([], recipeServings.value) } catch(e) { error.value = (e as Error).message } }
 async function saveRecipePreferences() { try { await api.setRecipePreferences({ preferred_tags: recipeTags.value.split(',').map(tag => tag.trim()).filter(Boolean), excluded_tags: excludedRecipeTags.value.split(',').map(tag => tag.trim()).filter(Boolean) }); await refreshRecipes() } catch(e) { error.value = (e as Error).message } }
@@ -85,8 +94,8 @@ async function addRecipeMissing(recommendation: RecipeRecommendation) { try { aw
 async function removeRecipe(recommendation: RecipeRecommendation) { if (!confirm(`„${recommendation.recipe.name}“ wirklich löschen?`)) return; try { await api.deleteRecipe(recommendation.recipe.id); await refreshRecipes() } catch(e) { error.value = (e as Error).message } }
 function clearQueryToken(name: string) { const url = new URL(window.location.href); url.searchParams.delete(name); window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`) }
 async function acceptPendingInvitation() { if (!inviteToken.value) return; await api.acceptInvitation(inviteToken.value); inviteToken.value = ''; clearQueryToken('invite') }
-async function login() { busy.value = true; error.value = ''; try { await api.login(email.value, password.value); loggedIn.value = true; await acceptPendingInvitation(); await load(); startLive() } catch(e) { error.value = String((e as Error).message) } finally { busy.value = false } }
-async function register() { busy.value = true; error.value = ''; try { await api.register(email.value, displayName.value, password.value, inviteToken.value ? null : householdName.value, inviteToken.value || null); if (inviteToken.value) { inviteToken.value = ''; clearQueryToken('invite') } loggedIn.value = true; await load(); startLive() } catch(e) { error.value = String((e as Error).message) } finally { busy.value = false } }
+async function login() { busy.value = true; error.value = ''; try { await api.login(email.value, password.value); loggedIn.value = true; await acceptPendingInvitation(); await load(); startLive(); await prepareVoiceLaunch() } catch(e) { error.value = String((e as Error).message) } finally { busy.value = false } }
+async function register() { busy.value = true; error.value = ''; try { await api.register(email.value, displayName.value, password.value, inviteToken.value ? null : householdName.value, inviteToken.value || null); if (inviteToken.value) { inviteToken.value = ''; clearQueryToken('invite') } loggedIn.value = true; await load(); startLive(); await prepareVoiceLaunch() } catch(e) { error.value = String((e as Error).message) } finally { busy.value = false } }
 async function requestReset() { const address = prompt('Für welche E-Mail-Adresse soll ein Reset-Link versendet werden?', email.value); if (!address) return; try { const result = await api.requestPasswordReset(address); alert(result.message) } catch(e) { error.value = (e as Error).message } }
 async function completeReset() { busy.value = true; error.value = ''; try { await api.confirmPasswordReset(resetToken.value, resetPassword.value); loggedIn.value = false; resetComplete.value = true; resetToken.value = ''; clearQueryToken('reset_token') } catch(e) { error.value = (e as Error).message } finally { busy.value = false } }
 async function createInvitation() { const address = prompt('E-Mail-Adresse der eingeladenen Person (optional)', '') ?? ''; const role = prompt('Rolle: admin, member oder viewer', 'member'); if (!role) return; try { const result = await api.createInvitation(address, role); invitationLink.value = result.invitation_url } catch(e) { error.value = (e as Error).message } }
@@ -150,32 +159,48 @@ function startLive() { eventsController?.abort(); eventsController = api.watchEv
 function markOffline() { online.value = false }
 function keyboardShortcuts(event: KeyboardEvent) { const editing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement; if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); if (shoppingUndo.value) undoShopping(); else undo(); return } if (editing) return; if (event.key === '/') { event.preventDefault(); activeView.value = 'stock'; setTimeout(() => document.querySelector<HTMLInputElement>('#stock-search')?.focus()) } else if (event.key.toLowerCase() === 'n') { activeView.value = 'shopping'; setTimeout(() => document.querySelector<HTMLInputElement>('#shopping-product')?.focus()) } else if (event.key.toLowerCase() === 'm') activeView.value = 'voice' }
 function clearVoiceTimers() { if (voiceMeter) window.clearInterval(voiceMeter); if (voiceTimeout) window.clearTimeout(voiceTimeout); if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); voiceMeter = undefined; voiceTimeout = undefined; voiceAutoTimer = undefined }
-function stopVoice() { if (voiceRecorder?.state === 'recording') voiceRecorder.stop(); voiceStream?.getTracks().forEach(track => track.stop()); voiceStream = null; voiceRecording.value = false; clearVoiceTimers() }
+function stopVoice() { if (voiceRecorder?.state === 'recording') voiceRecorder.stop(); voiceStream?.getTracks().forEach(track => track.stop()); voiceStream = null; if (voiceAudioContext) void voiceAudioContext.close(); voiceAudioContext = null; voiceRecording.value = false; voiceLevel.value = 0; clearVoiceTimers() }
 async function interpretVoice() { if (!voiceText.value.trim()) return; busy.value = true; error.value = ''; voiceResult.value = ''; try { const draft = await api.interpretVoice(voiceText.value.trim()); voiceActions.value = draft.actions; voiceStatus.value = draft.parser === 'rules' ? 'Lokal erkannt' : 'Mit KI erkannt'; scheduleVoiceAutoConfirm() } catch(e) { error.value = (e as Error).message; voiceStatus.value = 'Nicht erkannt' } finally { busy.value = false } }
-async function startVoice() {
+async function startVoice(startup = false): Promise<boolean> {
   error.value = ''; voiceResult.value = ''; voiceActions.value = []
-  if (!navigator.mediaDevices?.getUserMedia || !('MediaRecorder' in window)) { error.value = 'Dieser Browser unterstützt keine Audioaufnahme. Nutze die Texteingabe.'; return }
+  voicePermissionIntro.value = false
+  if (!navigator.mediaDevices?.getUserMedia || !('MediaRecorder' in window)) { error.value = 'Dieser Browser unterstützt keine Audioaufnahme. Nutze die Texteingabe.'; voiceLaunchFallback.value = startup; return false }
   try {
     voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    voiceLaunchFallback.value = false
     const chunks: Blob[] = []
     voiceRecorder = new MediaRecorder(voiceStream)
     voiceRecorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
     voiceRecorder.onstop = async () => { voiceStatus.value = 'Wird erkannt …'; try { const result = await api.transcribeVoice(new Blob(chunks, { type: voiceRecorder?.mimeType || 'audio/webm' })); voiceText.value = result.text; await interpretVoice() } catch(e) { error.value = `${(e as Error).message}. Du kannst den Text unten eingeben oder die Browser-Erkennung nutzen.`; voiceStatus.value = 'Transkription fehlgeschlagen' } }
-    const context = new AudioContext(), analyser = context.createAnalyser(), source = context.createMediaStreamSource(voiceStream), data = new Uint8Array(analyser.fftSize)
+    voiceAudioContext = new AudioContext(); const analyser = voiceAudioContext.createAnalyser(), source = voiceAudioContext.createMediaStreamSource(voiceStream), data = new Uint8Array(analyser.fftSize)
     source.connect(analyser); let heardSpeech = false, lastSound = Date.now()
     voiceMeter = window.setInterval(() => { analyser.getByteTimeDomainData(data); const rms = Math.sqrt(data.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / data.length); voiceLevel.value = Math.min(1, rms * 8); if (rms > 0.035) { heardSpeech = true; lastSound = Date.now() } else if (heardSpeech && Date.now() - lastSound > 1500) stopVoice() }, 100)
     voiceTimeout = window.setTimeout(stopVoice, 15000); voiceRecorder.start(); voiceRecording.value = true; voiceStatus.value = 'Ich höre zu …'
-  } catch(e) { error.value = 'Mikrofonzugriff wurde nicht erlaubt. Nutze die Texteingabe oder Browser-Erkennung.'; voiceStatus.value = 'Mikrofon nicht verfügbar' }
+    return true
+  } catch(e) { voiceStream?.getTracks().forEach(track => track.stop()); voiceStream = null; if (voiceAudioContext) void voiceAudioContext.close(); voiceAudioContext = null; error.value = 'Mikrofonzugriff wurde nicht erlaubt. Nutze die Texteingabe oder Browser-Erkennung.'; voiceStatus.value = 'Mikrofon nicht verfügbar'; voiceLaunchFallback.value = startup; return false }
 }
 function browserSpeech() { const SpeechRecognition = (window as unknown as { SpeechRecognition?: new () => { lang: string; interimResults: boolean; onresult: (event: { results: { 0: { transcript: string } }[] }) => void; onerror: () => void; start: () => void } }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: new () => { lang: string; interimResults: boolean; onresult: (event: { results: { 0: { transcript: string } }[] }) => void; onerror: () => void; start: () => void } }).webkitSpeechRecognition; if (!SpeechRecognition) { error.value = 'Die Browser-Spracherkennung ist hier nicht verfügbar.'; return } const recognition = new SpeechRecognition(); recognition.lang = 'de-DE'; recognition.interimResults = false; recognition.onresult = event => { voiceText.value = event.results[0][0].transcript; void interpretVoice() }; recognition.onerror = () => { error.value = 'Die Browser-Spracherkennung ist fehlgeschlagen.' }; recognition.start(); voiceStatus.value = 'Browser hört zu …' }
-async function saveVoicePreferences() { try { const saved = await api.setVoicePreferences({ auto_confirm_shopping: voiceAutoConfirm.value, speech_output: voiceSpeechOutput.value }); voiceAutoConfirm.value = saved.auto_confirm_shopping; voiceSpeechOutput.value = saved.speech_output; scheduleVoiceAutoConfirm() } catch(e) { error.value = (e as Error).message } }
+async function saveVoicePreferences() { try { const saved = await api.setVoicePreferences({ auto_confirm_shopping: voiceAutoConfirm.value, speech_output: voiceSpeechOutput.value, start_listening_on_launch: voiceStartOnLaunch.value }); voiceAutoConfirm.value = saved.auto_confirm_shopping; voiceSpeechOutput.value = saved.speech_output; voiceStartOnLaunch.value = saved.start_listening_on_launch ?? null; scheduleVoiceAutoConfirm() } catch(e) { error.value = (e as Error).message } }
 function setVoiceAutoConfirm(value: boolean) { voiceAutoConfirm.value = value; void saveVoicePreferences() }
 function setVoiceSpeechOutput(value: boolean) { voiceSpeechOutput.value = value; void saveVoicePreferences() }
+function setVoiceStartOnLaunch(value: boolean) { voiceStartOnLaunch.value = value; void saveVoicePreferences() }
+async function beginVoiceAfterExplanation() { localStorage.setItem('voice_permission_explained', 'true'); voicePermissionIntro.value = false; await startVoice(true) }
+async function prepareVoiceLaunch() {
+  if (voiceLaunchHandled) return
+  voiceLaunchHandled = true
+  const shouldListen = voiceStartOnLaunch.value ?? mobileDevice
+  if (!shouldListen || (!explicitVoiceLaunch && !standaloneDisplay)) return
+  activeView.value = 'voice'
+  let permission: PermissionState | undefined
+  try { permission = (await navigator.permissions?.query({ name: 'microphone' as PermissionName })).state } catch { permission = undefined }
+  if (permission !== 'granted' && localStorage.getItem('voice_permission_explained') !== 'true') { voicePermissionIntro.value = true; return }
+  await startVoice(true)
+}
 function scheduleVoiceAutoConfirm() { if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); const action = voiceActions.value[0]; if (!voiceAutoConfirm.value || voiceActions.value.length !== 1 || action?.intent !== 'add_to_shopping' || action.confidence < .9) { voiceCountdown.value = 0; return } voiceCountdown.value = 3; voiceAutoTimer = window.setInterval(() => { voiceCountdown.value -= 1; if (voiceCountdown.value <= 0) { if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); void confirmVoiceAction(action) } }, 1000) }
 function chooseVoiceProduct(action: VoiceAction, productId: string) { const product = products.value.find(item => item.id === productId); action.product_id = productId || undefined; if (product) { action.product_name = product.name; action.unit ||= product.default_unit } }
 async function confirmVoiceAction(action: VoiceAction) { if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); voiceCountdown.value = 0; busy.value = true; error.value = ''; try { const result = await api.executeVoice(action, selectedLocation.value || locations.value[0]?.id); voiceResult.value = result.message; voiceActions.value = voiceActions.value.filter(item => item !== action); if (result.result_type !== 'query') await load(); if (voiceSpeechOutput.value && result.result_type === 'query' && 'speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(result.message)) } catch(e) { error.value = (e as Error).message } finally { busy.value = false } }
 function discardVoiceAction(action: VoiceAction) { voiceActions.value = voiceActions.value.filter(item => item !== action); scheduleVoiceAutoConfirm() }
-onMounted(async () => { window.addEventListener('online', syncOffline); window.addEventListener('offline', markOffline); window.addEventListener('keydown', keyboardShortcuts); await refreshOffline(); if (loggedIn.value) { try { await acceptPendingInvitation(); await syncOffline(); startLive() } catch(e) { error.value = (e as Error).message } } })
+onMounted(async () => { window.addEventListener('online', syncOffline); window.addEventListener('offline', markOffline); window.addEventListener('keydown', keyboardShortcuts); await refreshOffline(); if (loggedIn.value) { try { await acceptPendingInvitation(); await syncOffline(); startLive(); await prepareVoiceLaunch() } catch(e) { error.value = (e as Error).message } } })
 onUnmounted(() => { stopVoice(); eventsController?.abort(); window.removeEventListener('online', syncOffline); window.removeEventListener('offline', markOffline); window.removeEventListener('keydown', keyboardShortcuts) })
 </script>
 
@@ -201,6 +226,28 @@ onUnmounted(() => { stopVoice(); eventsController?.abort(); window.removeEventLi
     <p v-if="error" class="error banner">{{ error }} <button @click="error=''">×</button></p>
     <p v-if="notice" class="success banner">{{ notice }} <button @click="notice=''">×</button></p>
     <p v-if="!online || pendingOffline" class="offline-banner">{{ online ? `${pendingOffline} Aktion(en) werden synchronisiert` : 'Offline – Aktionen werden sicher vorgemerkt' }}</p>
+
+    <section v-if="voicePermissionIntro" class="voice-launch-overlay" role="dialog" aria-modal="true" aria-labelledby="voice-permission-title">
+      <div class="voice-launch-card">
+        <span class="voice-launch-icon" aria-hidden="true">●</span>
+        <p class="eyebrow">SPRACHSTART</p>
+        <h2 id="voice-permission-title">Mikrofon für den Sprachstart</h2>
+        <p>Damit {{ appName }} nach dem Öffnen zuhören kann, benötigt die App einmalig Zugriff auf dein Mikrofon.</p>
+        <p class="voice-privacy">Während der Aufnahme ist der Mikrofonstatus sichtbar. Die Aufnahme endet bei Stille oder spätestens nach 15 Sekunden; danach wird das Mikrofon sofort freigegeben.</p>
+        <button class="primary voice-launch-action" @click="beginVoiceAfterExplanation">Mikrofon erlauben und sprechen</button>
+        <button class="ghost" @click="voicePermissionIntro=false">Jetzt nicht</button>
+      </div>
+    </section>
+
+    <section v-if="voiceLaunchFallback" class="voice-launch-overlay" role="dialog" aria-modal="true" aria-labelledby="voice-fallback-title">
+      <div class="voice-launch-card voice-fallback-card">
+        <span class="voice-launch-icon" aria-hidden="true">●</span>
+        <h2 id="voice-fallback-title">Sprachstart bereit</h2>
+        <p>Der Browser braucht eine Berührung, bevor das Mikrofon starten darf.</p>
+        <button class="primary voice-launch-action" @click="startVoice(true)">Tippen zum Sprechen</button>
+        <button class="ghost" @click="voiceLaunchFallback=false">Texteingabe verwenden</button>
+      </div>
+    </section>
 
     <template v-if="activeView === 'stock'">
       <section class="summary"><div><strong>{{ batches.length }}</strong><span>Chargen</span></div><div><strong>{{ shopping.length }}</strong><span>nachkaufen</span></div><div><strong>{{ batches.filter(b => b.best_before && new Date(b.best_before).getTime() < Date.now()+259200000).length }}</strong><span>bald fällig</span></div></section>
@@ -232,11 +279,13 @@ onUnmounted(() => { stopVoice(); eventsController?.abort(); window.removeEventLi
         <div class="voice-capture panel">
           <p class="eyebrow">SPRACHEINGABE</p><h2>Was soll ich eintragen?</h2><p class="muted">Zum Beispiel: „Setze zwei Packungen Nudeln auf die Einkaufsliste.“</p>
           <button class="voice-record" :class="{ recording: voiceRecording }" :aria-pressed="voiceRecording" :aria-label="voiceRecording ? 'Aufnahme beenden' : 'Sprachaufnahme starten'" @click="voiceRecording ? stopVoice() : startVoice()"><span>●</span>{{ voiceRecording ? 'Aufnahme beenden' : 'Sprechen' }}</button>
-          <div class="voice-level" role="meter" aria-label="Mikrofonpegel" :aria-valuenow="Math.round(voiceLevel * 100)"><span :style="{ width: `${Math.max(4, voiceLevel * 100)}%` }"></span></div><p class="voice-status" aria-live="polite">{{ voiceStatus }}<template v-if="voiceRecording"> · stoppt nach 1,5 s Stille, spätestens nach 15 s</template></p>
+          <div class="voice-level" role="meter" aria-label="Mikrofonpegel" :aria-valuenow="Math.round(voiceLevel * 100)"><span :style="{ width: `${Math.max(4, voiceLevel * 100)}%` }"></span></div><p class="voice-status" aria-live="polite">{{ voiceStatus }}<template v-if="voiceRecording"> · Mikrofon aktiv · stoppt nach 1,5 s Stille, spätestens nach 15 s</template></p>
           <button class="ghost voice-browser" @click="browserSpeech">Browser-Spracherkennung verwenden</button>
           <form class="voice-text" @submit.prevent="interpretVoice"><label>Erkannter oder eingegebener Text<textarea v-model="voiceText" rows="3" placeholder="Befehl eingeben …"></textarea></label><button class="primary" :disabled="busy || !voiceText.trim()">Befehl prüfen</button></form>
           <label class="voice-option"><input type="checkbox" :checked="voiceAutoConfirm" @change="setVoiceAutoConfirm(($event.target as HTMLInputElement).checked)"> Sichere Einkaufslisten-Einträge nach 3 Sekunden automatisch bestätigen</label>
           <label class="voice-option"><input type="checkbox" :checked="voiceSpeechOutput" @change="setVoiceSpeechOutput(($event.target as HTMLInputElement).checked)"> Antworten auf Bestandsfragen vorlesen</label>
+          <label class="voice-option"><input type="checkbox" :checked="voiceStartOnLaunch ?? mobileDevice" @change="setVoiceStartOnLaunch(($event.target as HTMLInputElement).checked)"> Beim App-Start sofort zuhören</label>
+          <p class="voice-default-note">Standard: auf Mobilgeräten an, auf PCs aus. Deine Auswahl wird im Benutzerkonto gespeichert.</p>
         </div>
         <div class="voice-results">
           <p v-if="voiceResult" class="success" aria-live="polite">✓ {{ voiceResult }}</p>
