@@ -18,6 +18,8 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - receipt_data:/data/receipts
     depends_on:
       db: { condition: service_healthy }
   frontend:
@@ -50,5 +52,6 @@ services:
       db: { condition: service_healthy }
 volumes:
   postgres_data:
+  receipt_data:
   caddy_data:
   caddy_config:

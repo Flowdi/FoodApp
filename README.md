@@ -2,7 +2,7 @@
 
 Vorrat ist eine selbst hostbare, mobile-first Haushaltsverwaltung für Lebensmittel. Der Server ist die einzige Wahrheit; jede Bestandsänderung landet als unveränderliche Buchung im Journal. Die PWA ist für zwei Android-Smartphones und mehrere Windows-PCs ausgelegt.
 
-## Stand: Phase 1, Phase 2 sowie Erweiterungen E1 bis E3 vollständig
+## Stand: Phase 1, Phase 2 sowie Erweiterungen E1 bis E4 vollständig
 
 Enthalten sind:
 
@@ -28,6 +28,8 @@ Enthalten sind:
   Kategorien, Teilen und kollisionssicherem Abhaken
 - wahlweise sofortige Einbuchung beim Abhaken oder gemeinsamer, atomarer Einkaufsabschluss;
   Einbuchungen lassen sich per Gegenbuchung rückgängig machen
+- mehrseitige Kassenbon-Erfassung per Kamera, Dateiauswahl oder Drag-and-Drop mit editierbarer
+  Prüfung, Dublettenschutz, Einkaufsliste-Abgleich und atomarer Einbuchung beziehungsweise Storno
 - täglicher MHD-/Mindestbestand-Job sowie individuell konfigurierbarer In-App-, SMTP- und Web-Push-Versand
 - PostgreSQL, Alembic, Docker Compose, HTTPS via Caddy und tägliche rotierende Backups
 - Phase-2-Schema für Rezepte sowie getestete Einheitenumrechnung
@@ -101,6 +103,44 @@ Unter **Mehr → Beim Abhaken** stehen zwei Modi zur Verfügung:
 Auf Smartphones stehen sichtbare Schaltflächen und Wischgesten zur Verfügung. Am PC wird die
 Liste zweispaltig mit Seitennavigation dargestellt. Tastaturkürzel: `N` neuer Listeneintrag,
 `/` Bestandssuche, `M` Spracheinstieg und `Strg+Z` für die letzte rückgängig machbare Aktion.
+
+## Kassenbon-Erkennung (E4)
+
+Unter **Bon** können bis zu zehn Fotos beziehungsweise PDF-Seiten gemeinsam hochgeladen werden.
+Große JPG- und PNG-Bilder verkleinert die PWA vor dem Upload auf höchstens 2000 Pixel Kantenlänge.
+Die Erkennung läuft als Hintergrundaufgabe; Fortschritt, Fehler und ein erneuter Versuch bleiben in
+der Bonansicht sichtbar. Erkannte Positionen werden vor jeder Buchung bearbeitet: Produkt, Menge,
+Einheit, Lagerort und MHD lassen sich korrigieren, Nicht-Lebensmittel werden standardmäßig
+ignoriert und unsichere Treffer zuerst gezeigt.
+
+Die Bestätigung bucht alle ausgewählten Positionen in einer Datenbanktransaktion mit je einem
+clientgenerierten UUID-Idempotency-Key. Offene Einkaufslistenpositionen werden dabei mit derselben
+Buchung abgehakt; bereits in den letzten zwölf Stunden über die Liste eingebuchte Mengen werden
+nicht doppelt gebucht. Händler, Zeitpunkt, Summe und Bild-Hash schützen vor Bon-Dubletten. Ein
+bewusstes erneutes Einbuchen muss ausdrücklich bestätigt werden. **Gesamten Bon stornieren**
+erzeugt ausschließlich unveränderliche Gegenbuchungen.
+
+Konfiguration in `.env`:
+
+```dotenv
+# vision_llm, tesseract_llm oder tesseract_rules
+RECEIPT_OCR_MODE=vision_llm
+RECEIPT_IMAGE_RETENTION_DAYS=30
+RECEIPT_SHOPPING_DEDUP_HOURS=12
+RECEIPT_STORAGE_PATH=/data/receipts
+```
+
+`vision_llm` sendet die verkleinerten Bonbilder an den konfigurierten gemeinsamen KI-Provider.
+`tesseract_llm` führt OCR lokal aus und sendet nur den erkannten Text an den Provider.
+`tesseract_rules` verarbeitet Bilder und Text vollständig lokal. Die Oberfläche zeigt den jeweils
+geltenden Datenschutzhinweis vor dem Upload. Bilder liegen haushaltsgetrennt im nicht öffentlichen
+Speicher, sind nur über einen authentifizierten, haushaltsgefilterten Endpunkt erreichbar und
+werden nach der konfigurierten Frist gelöscht; `0` löscht sie direkt nach erfolgreicher Buchung.
+OpenAI und Anthropic können nutzungsabhängige Kosten verursachen; Limits werden pro Haushalt
+serverseitig geprüft. Ohne konfiguriertes LLM meldet `vision_llm` beziehungsweise
+`tesseract_llm` verständlich, dass keine KI-Unterstützung verfügbar ist. Für einen vollständig
+lokalen Betrieb `RECEIPT_OCR_MODE=tesseract_rules` wählen und prüfen, dass das deutsche
+Tesseract-Sprachpaket installiert ist (im Docker-Image ist es enthalten).
 
 ## Architektur
 
@@ -227,7 +267,9 @@ Backups regelmäßig verschlüsselt auf einen zweiten Host kopieren und Wiederhe
 8. **E2 (abgeschlossen):** Aufnahme mit Pegelanzeige und automatischem Stopp, lokale deutsche Intent-Erkennung, editierbare Bestätigungskarten, optionale STT-/LLM-Provider sowie serverseitige Limits und Nutzungsprotokolle.
 9. **E3 (abgeschlossen):** Installierbarer, konfigurierbar benannter Android-Sprachstart mit
    direkter Route, Mikrofon-Onboarding, Touch-Fallback und Manifest-Kurzbefehlen.
-10. **E4 (offen):** Kassenbon-Erkennung wird in einem getrennten Pull Request umgesetzt.
+10. **E4 (abgeschlossen):** Mehrseitiger Kamera-/Datei-Upload, konfigurierbare lokale oder
+    KI-gestützte Erkennung, editierbare Prüfung, Alias-Lernen, Dubletten- und Einkaufslisten-Abgleich,
+    atomare Einbuchung, Gesamtstorno sowie Bildaufbewahrung.
 
 ## Lizenz
 

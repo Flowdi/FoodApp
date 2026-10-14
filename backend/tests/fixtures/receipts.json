@@ -1,0 +1,51 @@
+[
+  {
+    "name": "supermarket",
+    "merchant": "Markt Eins",
+    "purchased_at": "2026-10-12T18:20:00Z",
+    "total": "4.48",
+    "lines": [
+      {"raw_text": "H-MILCH 3,5% 1L 1,29", "quantity": "1", "unit": "l", "total_price": "1.29", "line_kind": "food", "confidence": 0.91},
+      {"raw_text": "2 X JOGHURT 1,59 3,18", "quantity": "2", "unit": "piece", "unit_price": "1.59", "total_price": "3.18", "line_kind": "food", "confidence": 0.86}
+    ]
+  },
+  {
+    "name": "discount-and-deposit",
+    "merchant": "Discounter",
+    "purchased_at": "2026-10-11T10:15:00Z",
+    "total": "2.48",
+    "lines": [
+      {"raw_text": "MILCH 1,29", "quantity": "1", "unit": "l", "total_price": "1.29", "line_kind": "food", "confidence": 0.8},
+      {"raw_text": "PFAND 0,25", "quantity": "1", "unit": "piece", "total_price": "0.25", "line_kind": "deposit", "confidence": 0.99},
+      {"raw_text": "RABATT -0,20", "quantity": "1", "unit": "piece", "total_price": "-0.20", "line_kind": "discount", "confidence": 0.99}
+    ]
+  },
+  {
+    "name": "weighted-produce",
+    "merchant": "Biomarkt",
+    "purchased_at": "2026-10-10T08:05:00Z",
+    "total": "1.53",
+    "lines": [
+      {"raw_text": "BANANEN 0,512 KG 2,99/KG 1,53", "quantity": "0.512", "unit": "kg", "unit_price": "2.99", "total_price": "1.53", "line_kind": "food", "confidence": 0.92}
+    ]
+  },
+  {
+    "name": "bakery",
+    "merchant": "Backhaus",
+    "purchased_at": "2026-10-09T07:30:00Z",
+    "total": "3.60",
+    "lines": [
+      {"raw_text": "3x BROETCHEN 1,20 3,60", "quantity": "3", "unit": "piece", "unit_price": "1.20", "total_price": "3.60", "line_kind": "food", "confidence": 0.84}
+    ]
+  },
+  {
+    "name": "ebon",
+    "merchant": "Online Markt",
+    "purchased_at": "2026-10-08T20:00:00Z",
+    "total": "5.99",
+    "lines": [
+      {"raw_text": "NUDELN 500G 0,99", "quantity": "1", "unit": "pack", "total_price": "0.99", "line_kind": "food", "confidence": 0.88},
+      {"raw_text": "KARTENZAHLUNG 5,99", "quantity": "1", "unit": "piece", "total_price": "5.99", "line_kind": "payment", "confidence": 0.99}
+    ]
+  }
+]

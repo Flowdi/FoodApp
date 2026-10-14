@@ -166,6 +166,71 @@ class VoiceExecution(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class Receipt(Base):
+    __tablename__ = "receipts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    merchant: Mapped[str | None] = mapped_column(String(180))
+    purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    total: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    status: Mapped[str] = mapped_column(String(24), default="processing", index=True)
+    progress: Mapped[int] = mapped_column(default=0)
+    fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
+    image_hash: Mapped[str] = mapped_column(String(64))
+    image_paths: Mapped[list[str]] = mapped_column(JSON, default=list)
+    processing_error: Mapped[str | None] = mapped_column(Text)
+    analysis_provider: Mapped[str | None] = mapped_column(String(40))
+    duplicate_of_id: Mapped[str | None] = mapped_column(
+        ForeignKey("receipts.id", ondelete="SET NULL")
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    lines: Mapped[list["ReceiptLine"]] = relationship(
+        cascade="all, delete-orphan", order_by="ReceiptLine.position"
+    )
+    uploaded_by: Mapped[User] = relationship()
+
+
+class ReceiptLine(Base):
+    __tablename__ = "receipt_lines"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    receipt_id: Mapped[str] = mapped_column(
+        ForeignKey("receipts.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column()
+    raw_text: Mapped[str] = mapped_column(String(500))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=1)
+    unit: Mapped[str] = mapped_column(String(20), default="piece")
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    total_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    line_kind: Mapped[str] = mapped_column(String(30), default="food")
+    status: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=0)
+    product_id: Mapped[str | None] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), index=True
+    )
+    location_id: Mapped[str | None] = mapped_column(
+        ForeignKey("storage_locations.id", ondelete="SET NULL")
+    )
+    best_before: Mapped[date | None] = mapped_column(Date)
+    movement_id: Mapped[str | None] = mapped_column(
+        ForeignKey("stock_movements.id", ondelete="SET NULL"), unique=True
+    )
+    coordinates: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    idempotency_key: Mapped[str | None] = mapped_column(String(36))
+    version: Mapped[int] = mapped_column(default=1, nullable=False)
+    product: Mapped[Product | None] = relationship()
+
+
 class ProductLookupCache(Base):
     __tablename__ = "product_lookup_cache"
     __table_args__ = (UniqueConstraint("household_id", "barcode"),)

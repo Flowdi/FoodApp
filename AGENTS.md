@@ -14,17 +14,24 @@ Vorrat ist eine deutschsprachige, i18n-fähige Multi-Device-PWA. Code, Bezeichne
 - Rollen werden serverseitig geprüft. UI-Ausblendung allein ist keine Autorisierung.
 - SQLite ist nur Entwicklung/Test; Parallelitätsverhalten wird gegen PostgreSQL geprüft.
 - API-Schemas sind Pydantic-v2-Modelle. SQLAlchemy verwendet ausschließlich 2.x-Style.
+- Strukturierte KI-Antworten laufen über `backend/app/ai/`, werden mit Pydantic validiert und
+  besitzen einen lokalen beziehungsweise regelbasierten Fallback. API-Schlüssel bleiben im Backend.
+- Bonbilder liegen ausschließlich im privaten, haushaltsgetrennten Speicher und werden über den
+  authentifizierten API-Endpunkt ausgeliefert; die konfigurierte Aufbewahrungsfrist ist verbindlich.
 
 ## Verzeichnisübersicht
 
 - `backend/app/models.py`: persistentes Domänenmodell
 - `backend/app/services/`: transaktionale Geschäftslogik
 - `backend/app/services/shopping.py`: persistente Einkaufsliste und atomare Einbuchung
+- `backend/app/services/receipts.py`: Bonerkennung, Zuordnung und Bildaufbewahrung
+- `backend/app/ai/`: austauschbare Text-, Bild- und Sprache-Provider
 - `backend/app/routers/`: dünne HTTP-Schicht
 - `backend/alembic/`: Schema-Migrationen
 - `backend/tests/`: Unit- und API-Tests
 - `frontend/src/`: Vue-3-PWA
 - `frontend/tests/lighthouse-pwa.mjs`: installierbares Manifest und PWA-Audits
+- `frontend/tests/e2e/`: mobile und Desktop-Kernpfade für Einkauf, Sprache und Bon
 - `scripts/`: Betriebs- und Backup-Helfer
 
 ## Befehle

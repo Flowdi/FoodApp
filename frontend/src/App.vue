@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { BrowserMultiFormatReader } from '@zxing/browser'
-import { api, type Batch, type Household, type InventoryDetail, type Location, type Member, type Movement, type MovementResult, type Notification, type OfflineConflict, type Product, type QueuedResult, type RecipeRecommendation, type ShoppingItem, type VoiceAction } from './api'
+import { api, type Batch, type Household, type InventoryDetail, type Location, type Member, type Movement, type MovementResult, type Notification, type OfflineConflict, type Product, type QueuedResult, type Receipt, type ReceiptConfig, type ReceiptLine, type RecipeRecommendation, type ShoppingItem, type VoiceAction } from './api'
 import { t } from './i18n'
 
 type View = 'stock' | 'shopping' | 'voice' | 'receipt' | 'recipes' | 'history' | 'inventory' | 'more'
@@ -25,6 +25,8 @@ const batches = ref<Batch[]>([]), products = ref<Product[]>([]), locations = ref
 const movements = ref<Movement[]>([]), shopping = ref<ShoppingItem[]>([])
 const recipeRecommendations = ref<RecipeRecommendation[]>([]), recipeTags = ref(''), excludedRecipeTags = ref(''), recipeServings = ref<number | undefined>()
 const notifications = ref<Notification[]>([])
+const receipts = ref<Receipt[]>([]), activeReceipt = ref<Receipt | null>(null), receiptConfig = ref<ReceiptConfig | null>(null)
+const receiptFiles = ref<File[]>([]), receiptPreviews = ref<string[]>([]), receiptImageUrl = ref(''), selectedReceiptLine = ref<string | null>(null), allowReceiptDuplicate = ref(false), receiptDragging = ref(false)
 const household = ref<Household | null>(null), members = ref<Member[]>([]), notificationChannels = ref<string[]>([])
 const activeView = ref<View>(initialView), search = ref(''), busy = ref(false), error = ref('')
 const notice = ref(''), locationFilter = ref(''), categoryFilter = ref(''), expiryFilter = ref(false), shortageFilter = ref(false), sortBy = ref('expiry')
@@ -48,6 +50,7 @@ let voiceMeter: number | undefined
 let voiceTimeout: number | undefined
 let voiceAutoTimer: number | undefined
 let voiceLaunchHandled = false
+let receiptPollTimer: number | undefined
 const swipeStarts = new Map<string, number>()
 const lastMovements = ref<{ id: string; version: number }[]>([])
 const shoppingProductIds = computed(() => new Set(shopping.value.filter(item => item.status === 'open').map(item => item.product_id)))
@@ -75,12 +78,22 @@ const filteredMovements = computed(() => movements.value.filter(item => {
 }))
 const batchMap = computed(() => new Map(batches.value.map(batch => [batch.id, batch])))
 const movementNames: Record<string, string> = { purchase: 'Eingebucht', consume: 'Entnommen', discard: 'Entsorgt', adjust: 'Inventur', transfer: 'Ungelagert', reversal: 'Storniert' }
+const reviewReceiptLines = computed(() => activeReceipt.value?.lines.filter(line => !['ignored', 'already_booked'].includes(line.status)) || [])
+const receiptHighlightStyle = computed(() => {
+  const coordinates = activeReceipt.value?.lines.find(line => line.id === selectedReceiptLine.value)?.coordinates
+  if (!coordinates) return null
+  const values = ['x', 'y', 'width', 'height'].map(key => Number(coordinates[key]))
+  if (values.some(value => !Number.isFinite(value))) return null
+  const percent = (value: number) => `${value <= 1 ? value * 100 : value}%`
+  return { left: percent(values[0]), top: percent(values[1]), width: percent(values[2]), height: percent(values[3]) }
+})
 
 async function load() {
   const [stock, productList, locationList, movementList, shoppingList, notificationList, householdData, memberList, preferences, recommendations, recipePreferences, voicePreferences] = await Promise.all([
     api.stock(), api.products(), api.locations(), api.movements(), api.shoppingList(), api.notifications(), api.household(), api.members(), api.notificationPreferences(), api.recipeRecommendations([], recipeServings.value), api.recipePreferences(), api.voicePreferences()
   ])
   batches.value = stock; products.value = productList; locations.value = locationList; movements.value = movementList; shopping.value = shoppingList; notifications.value = notificationList; household.value = householdData; members.value = memberList; notificationChannels.value = preferences.channels; recipeRecommendations.value = recommendations; recipeTags.value = recipePreferences.preferred_tags.join(', '); excludedRecipeTags.value = recipePreferences.excluded_tags.join(', '); voiceAutoConfirm.value = voicePreferences.auto_confirm_shopping; voiceSpeechOutput.value = voicePreferences.speech_output; voiceStartOnLaunch.value = voicePreferences.start_listening_on_launch ?? null
+  await refreshReceipts()
 }
 async function refreshRecipes() { try { recipeRecommendations.value = await api.recipeRecommendations([], recipeServings.value) } catch(e) { error.value = (e as Error).message } }
 async function saveRecipePreferences() { try { await api.setRecipePreferences({ preferred_tags: recipeTags.value.split(',').map(tag => tag.trim()).filter(Boolean), excluded_tags: excludedRecipeTags.value.split(',').map(tag => tag.trim()).filter(Boolean) }); await refreshRecipes() } catch(e) { error.value = (e as Error).message } }
@@ -200,8 +213,77 @@ function scheduleVoiceAutoConfirm() { if (voiceAutoTimer) window.clearInterval(v
 function chooseVoiceProduct(action: VoiceAction, productId: string) { const product = products.value.find(item => item.id === productId); action.product_id = productId || undefined; if (product) { action.product_name = product.name; action.unit ||= product.default_unit } }
 async function confirmVoiceAction(action: VoiceAction) { if (voiceAutoTimer) window.clearInterval(voiceAutoTimer); voiceCountdown.value = 0; busy.value = true; error.value = ''; try { const result = await api.executeVoice(action, selectedLocation.value || locations.value[0]?.id); voiceResult.value = result.message; voiceActions.value = voiceActions.value.filter(item => item !== action); if (result.result_type !== 'query') await load(); if (voiceSpeechOutput.value && result.result_type === 'query' && 'speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(result.message)) } catch(e) { error.value = (e as Error).message } finally { busy.value = false } }
 function discardVoiceAction(action: VoiceAction) { voiceActions.value = voiceActions.value.filter(item => item !== action); scheduleVoiceAutoConfirm() }
+function clearReceiptUrls() { receiptPreviews.value.forEach(URL.revokeObjectURL); receiptPreviews.value = []; if (receiptImageUrl.value) URL.revokeObjectURL(receiptImageUrl.value); receiptImageUrl.value = '' }
+async function resizeReceiptImage(file: File): Promise<File> {
+  if (!['image/jpeg', 'image/png'].includes(file.type)) return file
+  const bitmap = await createImageBitmap(file)
+  if (Math.max(bitmap.width, bitmap.height) <= 2000) { bitmap.close(); return file }
+  const scale = 2000 / Math.max(bitmap.width, bitmap.height)
+  const canvas = document.createElement('canvas'); canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale)
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close()
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('Bild konnte nicht verkleinert werden')), 'image/jpeg', .86))
+  return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg', lastModified: file.lastModified })
+}
+async function chooseReceiptFiles(files: FileList | File[]) {
+  error.value = ''; const chosen = Array.from(files).slice(0, 10)
+  try {
+    const prepared = await Promise.all(chosen.map(resizeReceiptImage)); const combined = [...receiptFiles.value, ...prepared].slice(0, 10); receiptPreviews.value.forEach(URL.revokeObjectURL); receiptFiles.value = combined
+    receiptPreviews.value = combined.map(file => file.type.startsWith('image/') ? URL.createObjectURL(file) : '')
+  } catch(e) { error.value = (e as Error).message }
+}
+function removeReceiptFile(index: number) { URL.revokeObjectURL(receiptPreviews.value[index]); receiptFiles.value.splice(index, 1); receiptPreviews.value.splice(index, 1) }
+function dropReceipt(event: DragEvent) { receiptDragging.value = false; if (event.dataTransfer?.files.length) void chooseReceiptFiles(event.dataTransfer.files) }
+async function refreshReceipts() {
+  try {
+    const [items, config] = await Promise.all([api.receipts(), api.receiptConfig()]); receipts.value = items; receiptConfig.value = config
+    if (activeReceipt.value) { const current = items.find(item => item.id === activeReceipt.value?.id); if (current) activeReceipt.value = current }
+  } catch(e) { if (activeView.value === 'receipt') error.value = (e as Error).message }
+}
+function scheduleReceiptPoll(receipt: Receipt) {
+  if (receiptPollTimer) window.clearTimeout(receiptPollTimer)
+  if (receipt.status !== 'processing') return
+  receiptPollTimer = window.setTimeout(async () => { try { await openReceipt(receipt.id, false) } catch { /* next manual refresh reports the error */ } }, 1200)
+}
+async function loadReceiptImage(receipt: Receipt) {
+  if (receiptImageUrl.value) URL.revokeObjectURL(receiptImageUrl.value); receiptImageUrl.value = ''
+  if (!receipt.image_count) return
+  try { receiptImageUrl.value = URL.createObjectURL(await api.receiptImage(receipt.id)) } catch { /* retained metadata remains usable */ }
+}
+async function openReceipt(receiptId: string, loadImage = true) {
+  const receipt = await api.receipt(receiptId); activeReceipt.value = receipt; allowReceiptDuplicate.value = false
+  receipts.value = [receipt, ...receipts.value.filter(item => item.id !== receipt.id)]
+  if (loadImage || (!receiptImageUrl.value && receipt.image_count)) await loadReceiptImage(receipt)
+  scheduleReceiptPoll(receipt)
+}
+async function uploadReceipt() {
+  if (!online.value || !receiptFiles.value.length) return
+  busy.value = true; error.value = ''
+  try { const receipt = await api.uploadReceipt(receiptFiles.value); receiptFiles.value = []; clearReceiptUrls(); activeReceipt.value = receipt; receipts.value.unshift(receipt); scheduleReceiptPoll(receipt); notice.value = 'Bon wird verarbeitet' }
+  catch(e) { error.value = (e as Error).message } finally { busy.value = false }
+}
+async function retryReceipt() { if (!activeReceipt.value) return; activeReceipt.value = await api.retryReceipt(activeReceipt.value.id); scheduleReceiptPoll(activeReceipt.value) }
+async function saveReceiptLine(line: ReceiptLine, changes: Record<string, unknown>) {
+  if (!activeReceipt.value) return
+  try { activeReceipt.value = await api.updateReceiptLine(activeReceipt.value.id, line.id, { expected_version: line.version, ...changes }) }
+  catch(e) { error.value = (e as Error).message; await openReceipt(activeReceipt.value.id, false) }
+}
+function selectReceiptProduct(line: ReceiptLine, productId: string) { const product = products.value.find(item => item.id === productId); line.product_id = productId || undefined; if (product) { line.product_name = product.name; line.unit = product.default_unit; line.location_id ||= product.default_location_id } void saveReceiptLine(line, { product_id: productId || null }) }
+async function createReceiptProduct(line: ReceiptLine) { const name = prompt('Name des neuen Produkts', line.raw_text); if (!name) return; const defaultUnit = prompt('Standardeinheit: piece, g, kg, ml, l oder package', line.unit || 'piece'); if (!defaultUnit) return; try { const product = await api.createProduct({ name, default_unit: defaultUnit, barcodes: [] }); products.value.push(product); line.product_id = product.id; line.product_name = product.name; line.unit = product.default_unit; line.location_id = product.default_location_id; await saveReceiptLine(line, { product_id: product.id, unit: product.default_unit, location_id: product.default_location_id || null }) } catch(e) { error.value = (e as Error).message } }
+function setReceiptDate(line: ReceiptLine, days: number) { const date = new Date(); date.setDate(date.getDate() + days); line.best_before = date.toISOString().slice(0, 10); void saveReceiptLine(line, { best_before: line.best_before }) }
+async function confirmReceipt() {
+  const receipt = activeReceipt.value; if (!receipt) return
+  const lines = reviewReceiptLines.value
+  if (!lines.length || lines.some(line => !line.product_id)) { error.value = 'Bitte alle einzubuchenden Positionen einem Produkt zuordnen.'; return }
+  busy.value = true; error.value = ''
+  try {
+    activeReceipt.value = await api.confirmReceipt(receipt.id, { allow_duplicate: allowReceiptDuplicate.value, lines: lines.map(line => ({ line_id: line.id, expected_version: line.version, product_id: line.product_id, quantity: Number(line.quantity), unit: line.unit, location_id: line.location_id || null, best_before: line.best_before || null, idempotency_key: crypto.randomUUID() })) })
+    await load(); notice.value = 'Bon wurde vollständig eingebucht'
+  } catch(e) { error.value = (e as Error).message } finally { busy.value = false }
+}
+async function reverseReceipt() { const receipt = activeReceipt.value; if (!receipt || !confirm('Alle Buchungen dieses Bons wirklich stornieren?')) return; try { activeReceipt.value = await api.reverseReceipt(receipt.id); await load(); notice.value = 'Bon wurde storniert' } catch(e) { error.value = (e as Error).message } }
+function receiptStatus(receipt: Receipt) { return ({ processing: 'Wird erkannt', review: 'Zu prüfen', failed: 'Fehlgeschlagen', confirmed: 'Eingebucht', reversed: 'Storniert' } as Record<string, string>)[receipt.status] || receipt.status }
 onMounted(async () => { window.addEventListener('online', syncOffline); window.addEventListener('offline', markOffline); window.addEventListener('keydown', keyboardShortcuts); await refreshOffline(); if (loggedIn.value) { try { await acceptPendingInvitation(); await syncOffline(); startLive(); await prepareVoiceLaunch() } catch(e) { error.value = (e as Error).message } } })
-onUnmounted(() => { stopVoice(); eventsController?.abort(); window.removeEventListener('online', syncOffline); window.removeEventListener('offline', markOffline); window.removeEventListener('keydown', keyboardShortcuts) })
+onUnmounted(() => { stopVoice(); clearReceiptUrls(); if (receiptPollTimer) window.clearTimeout(receiptPollTimer); eventsController?.abort(); window.removeEventListener('online', syncOffline); window.removeEventListener('offline', markOffline); window.removeEventListener('keydown', keyboardShortcuts) })
 </script>
 
 <template>
@@ -303,7 +385,52 @@ onUnmounted(() => { stopVoice(); eventsController?.abort(); window.removeEventLi
     </template>
 
     <template v-else-if="activeView === 'receipt'">
-      <section class="empty panel feature-preview"><span>▣</span><h2>Kassenbon folgt in E4</h2><p>Foto-, Datei- und Drag-and-Drop-Verarbeitung werden im dafür vorgesehenen Pull Request ergänzt.</p></section>
+      <section class="receipt-workspace">
+        <div class="receipt-main">
+          <section v-if="!activeReceipt" class="receipt-upload panel" :class="{ dragging: receiptDragging }" @dragenter.prevent="receiptDragging=true" @dragover.prevent @dragleave.prevent="receiptDragging=false" @drop.prevent="dropReceipt">
+            <span class="receipt-upload-icon" aria-hidden="true">▣</span><h2>{{ t('receiptUpload') }}</h2>
+            <p>Bon flach hinlegen, ganz ins Bild nehmen und auf gutes Licht achten. Lange Bons kannst du in mehreren Abschnitten fotografieren.</p>
+            <div class="receipt-picker-actions"><label class="receipt-file-button">Foto aufnehmen<input class="receipt-camera-picker" type="file" accept="image/*" capture="environment" multiple @change="chooseReceiptFiles(($event.target as HTMLInputElement).files || [])"></label><label class="receipt-file-button secondary">Dateien auswählen<input class="receipt-file-picker" type="file" accept="image/jpeg,image/png,image/heic,image/heif,application/pdf" multiple @change="chooseReceiptFiles(($event.target as HTMLInputElement).files || [])"></label></div>
+            <p class="receipt-drop-hint">Am PC kannst du Dateien auch hierher ziehen.</p>
+            <div v-if="receiptFiles.length" class="receipt-previews"><div v-for="(file, index) in receiptFiles" :key="`${file.name}-${index}`"><img v-if="receiptPreviews[index]" :src="receiptPreviews[index]" alt="Ausgewählte Bonseite"><span v-else>PDF</span><small>{{ file.name }}</small><button type="button" :aria-label="`${file.name} entfernen`" @click="removeReceiptFile(index)">×</button></div></div>
+            <button class="primary full" :disabled="busy || !online || !receiptFiles.length" @click="uploadReceipt">{{ busy ? 'Wird hochgeladen …' : `${receiptFiles.length || ''} Bondatei${receiptFiles.length === 1 ? '' : 'en'} analysieren` }}</button>
+            <p v-if="!online" class="receipt-warning">Für die Bonerkennung ist eine Internetverbindung erforderlich.</p>
+            <p v-if="receiptConfig" class="receipt-privacy">Datenschutz: {{ receiptConfig.cloud_processing === 'images' ? 'Bonbilder werden an den konfigurierten Cloud-Anbieter übertragen.' : receiptConfig.cloud_processing === 'text' ? 'Die Bilderkennung läuft lokal; nur erkannter Text wird an den Cloud-Anbieter übertragen.' : 'Bilder und Text werden lokal verarbeitet.' }} Bilder werden {{ receiptConfig.image_retention_days === 0 ? 'direkt nach dem Einbuchen gelöscht' : `nach ${receiptConfig.image_retention_days} Tagen gelöscht` }}.</p>
+          </section>
+
+          <section v-else class="receipt-detail">
+            <button class="receipt-back" @click="activeReceipt=null; selectedReceiptLine=null">← Neuer oder anderer Bon</button>
+            <div class="receipt-heading panel"><div><p class="eyebrow">{{ receiptStatus(activeReceipt).toUpperCase() }}</p><h2>{{ activeReceipt.merchant || 'Kassenbon' }}</h2><p>{{ activeReceipt.purchased_at ? new Date(activeReceipt.purchased_at).toLocaleString('de-DE') : new Date(activeReceipt.created_at).toLocaleString('de-DE') }} · {{ activeReceipt.total ? `${Number(activeReceipt.total).toFixed(2)} €` : 'Summe offen' }}</p></div><span>{{ activeReceipt.image_count }} Seite{{ activeReceipt.image_count === 1 ? '' : 'n' }}</span></div>
+            <div v-if="activeReceipt.status === 'processing'" class="receipt-processing panel" aria-live="polite"><strong>Bon wird erkannt … {{ activeReceipt.progress }} %</strong><progress :value="activeReceipt.progress" max="100"></progress><p>Du kannst die Seite verlassen; die Verarbeitung läuft im Hintergrund weiter.</p></div>
+            <div v-else-if="activeReceipt.status === 'failed'" class="receipt-failed panel"><strong>Erkennung fehlgeschlagen</strong><p>{{ activeReceipt.processing_error }}</p><button class="primary" @click="retryReceipt">Erneut versuchen</button></div>
+            <template v-else>
+              <p v-if="activeReceipt.duplicate_message" class="receipt-duplicate">⚠ {{ activeReceipt.duplicate_message }}</p>
+              <p v-if="activeReceipt.sum_difference && Number(activeReceipt.sum_difference) > .02" class="receipt-warning">Die Positionssumme weicht um {{ Number(activeReceipt.sum_difference).toFixed(2) }} € von der Bonsumme ab.</p>
+              <div class="receipt-review-layout">
+                <div v-if="receiptImageUrl" class="receipt-image-panel"><div class="receipt-image-canvas"><img :src="receiptImageUrl" alt="Hochgeladener Kassenbon"><span v-if="receiptHighlightStyle" class="receipt-coordinate" :style="receiptHighlightStyle" aria-hidden="true"></span></div></div>
+                <div class="receipt-lines">
+                  <article v-for="line in activeReceipt.lines" :key="line.id" class="receipt-line" :class="[`status-${line.status}`, { selected: selectedReceiptLine === line.id }]" @click="selectedReceiptLine=line.id">
+                    <div class="receipt-line-title"><span>{{ line.status === 'mapped' || line.status === 'booked' ? '✓' : line.status === 'ignored' || line.status === 'already_booked' ? '–' : '!' }}</span><div><strong>{{ line.raw_text }}</strong><small>{{ Math.round(Number(line.confidence) * 100) }} % sicher<template v-if="line.status === 'already_booked'"> · bereits über Einkaufsliste gebucht</template></small></div><b v-if="line.total_price">{{ Number(line.total_price).toFixed(2) }} €</b></div>
+                    <div v-if="activeReceipt.status === 'review'" class="receipt-line-fields">
+                      <label>Produkt<select :value="line.product_id || ''" :disabled="line.status === 'already_booked'" @change="selectReceiptProduct(line, ($event.target as HTMLSelectElement).value)"><option value="">Bitte zuordnen</option><option v-for="product in products" :key="product.id" :value="product.id">{{ product.name }}</option></select></label>
+                      <button v-if="!line.product_id" type="button" class="receipt-new-product" @click.stop="createReceiptProduct(line)">＋ Neues Produkt anlegen</button>
+                      <div class="row"><label>Menge<input v-model="line.quantity" type="number" min="0.001" step="0.001" @change="saveReceiptLine(line, { quantity: Number(line.quantity) })"></label><label>Einheit<select v-model="line.unit" @change="saveReceiptLine(line, { unit: line.unit })"><option value="piece">Stück</option><option value="package">Packung</option><option>g</option><option>kg</option><option>ml</option><option>l</option></select></label></div>
+                      <label>Lagerort<select v-model="line.location_id" @change="saveReceiptLine(line, { location_id: line.location_id || null })"><option value="">Standard</option><option v-for="location in locations" :key="location.id" :value="location.id">{{ location.name }}</option></select></label>
+                      <label>MHD<input v-model="line.best_before" type="date" @change="saveReceiptLine(line, { best_before: line.best_before || null })"></label>
+                      <div class="receipt-date-shortcuts"><button type="button" @click.stop="setReceiptDate(line, 3)">+3 Tage</button><button type="button" @click.stop="setReceiptDate(line, 7)">+7 Tage</button><button type="button" @click.stop="setReceiptDate(line, 30)">+30 Tage</button></div>
+                      <label class="receipt-ignore"><input type="checkbox" :checked="line.status === 'ignored'" @change="saveReceiptLine(line, { ignored: ($event.target as HTMLInputElement).checked })"> Nicht einbuchen</label>
+                    </div>
+                  </article>
+                </div>
+              </div>
+              <div v-if="activeReceipt.status === 'review'" class="receipt-confirm panel"><label v-if="activeReceipt.duplicate_of_id"><input v-model="allowReceiptDuplicate" type="checkbox"> Ich habe die Dublette geprüft und möchte trotzdem einbuchen.</label><button class="primary full" :disabled="busy || !reviewReceiptLines.length || reviewReceiptLines.some(line => !line.product_id) || (!!activeReceipt.duplicate_of_id && !allowReceiptDuplicate)" @click="confirmReceipt">{{ reviewReceiptLines.length }} Positionen einbuchen</button></div>
+              <button v-if="activeReceipt.status === 'confirmed'" class="danger receipt-reverse" @click="reverseReceipt">Gesamten Bon stornieren</button>
+              <p v-if="activeReceipt.status === 'reversed'" class="receipt-reversed">Dieser Bon wurde vollständig storniert.</p>
+            </template>
+          </section>
+        </div>
+        <aside class="receipt-history"><div class="section-heading"><div><p class="eyebrow">VERLAUF</p><h2>Letzte Bons</h2></div><button @click="activeReceipt=null">＋ Neu</button></div><button v-for="receipt in receipts" :key="receipt.id" :class="{ active: activeReceipt?.id === receipt.id }" @click="openReceipt(receipt.id)"><span><strong>{{ receipt.merchant || 'Kassenbon' }}</strong><small>{{ new Date(receipt.created_at).toLocaleDateString('de-DE') }}</small></span><em>{{ receiptStatus(receipt) }}</em></button><p v-if="!receipts.length" class="muted">Noch keine Bons hochgeladen.</p></aside>
+      </section>
     </template>
 
     <template v-else-if="activeView === 'recipes'">

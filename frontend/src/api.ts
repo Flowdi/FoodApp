@@ -22,6 +22,9 @@ export type VoiceIntent = 'add_to_stock' | 'consume' | 'discard' | 'add_to_shopp
 export type VoiceAction = { intent: VoiceIntent; product_id?: string; product_name: string; quantity?: string; unit?: string; confidence: number; choices: { id: string; name: string }[]; expected_versions: Record<string, number>; requires_confirmation: boolean }
 export type VoiceInterpretation = { transcript: string; actions: VoiceAction[]; parser: 'rules' | 'llm' }
 export type VoicePreferences = { auto_confirm_shopping: boolean; speech_output: boolean; start_listening_on_launch: boolean | null }
+export type ReceiptLine = { id: string; raw_text: string; quantity: string; unit: string; unit_price?: string; total_price?: string; line_kind: string; status: string; confidence: string; product_id?: string; product_name?: string; location_id?: string; best_before?: string; movement_id?: string; coordinates?: Record<string, unknown>; version: number }
+export type Receipt = { id: string; merchant?: string; purchased_at?: string; total?: string; status: 'processing' | 'review' | 'failed' | 'confirmed' | 'reversed'; progress: number; processing_error?: string; analysis_provider?: string; duplicate_of_id?: string; duplicate_message?: string; sum_difference?: string; image_count: number; uploaded_by_name: string; created_at: string; confirmed_at?: string; reversed_at?: string; lines: ReceiptLine[] }
+export type ReceiptConfig = { ocr_mode: string; images_sent_to_cloud: boolean; cloud_processing: 'images' | 'text' | 'none'; image_retention_days: number }
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message) }
@@ -73,6 +76,13 @@ async function upload<T>(path: string, body: FormData): Promise<T> {
     throw new ApiError(typeof detail === 'string' ? detail : detail?.message || 'Aktion fehlgeschlagen', response.status)
   }
   return response.json()
+}
+
+async function blobRequest(path: string): Promise<Blob> {
+  const response = await fetch(`/api/v1${path}`, { headers: { ...(state.token && { Authorization: `Bearer ${state.token}` }), ...(state.household && { 'X-Household-ID': state.household }) } })
+  if (response.status === 401 && await renewAccessToken()) return blobRequest(path)
+  if (!response.ok) throw new ApiError('Bonbild konnte nicht geladen werden', response.status)
+  return response.blob()
 }
 
 async function offlineRequest<T>(path: string, body: Record<string, unknown>): Promise<T | QueuedResult> {
@@ -168,6 +178,15 @@ export const api = {
   ,transcribeVoice: (audio: Blob) => { const form = new FormData(); form.append('audio', audio, 'voice.webm'); return upload<{ text: string }>('/voice/transcribe', form) }
   ,voicePreferences: () => request<VoicePreferences>('/voice/preferences')
   ,setVoicePreferences: (body: VoicePreferences) => request<VoicePreferences>('/voice/preferences', { method: 'PUT', body: JSON.stringify(body) })
+  ,receipts: () => request<Receipt[]>('/receipts')
+  ,receiptConfig: () => request<ReceiptConfig>('/receipts/config')
+  ,receipt: (receiptId: string) => request<Receipt>(`/receipts/${receiptId}`)
+  ,uploadReceipt: (files: File[]) => { const form = new FormData(); files.forEach(file => form.append('files', file)); return upload<Receipt>('/receipts', form) }
+  ,receiptImage: (receiptId: string, index = 0) => blobRequest(`/receipts/${receiptId}/images/${index}`)
+  ,retryReceipt: (receiptId: string) => request<Receipt>(`/receipts/${receiptId}/process`, { method: 'POST' })
+  ,updateReceiptLine: (receiptId: string, lineId: string, body: object) => request<Receipt>(`/receipts/${receiptId}/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(body) })
+  ,confirmReceipt: (receiptId: string, body: object) => request<Receipt>(`/receipts/${receiptId}/confirm`, { method: 'POST', body: JSON.stringify(body) })
+  ,reverseReceipt: (receiptId: string) => request<Receipt>(`/receipts/${receiptId}/reverse`, { method: 'POST', body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) })
   ,recipes: () => request<Recipe[]>('/recipes')
   ,recipeRecommendations: (tags: string[] = [], servings?: number) => { const params = new URLSearchParams(); tags.forEach(tag => params.append('tags', tag)); if (servings) params.set('servings', String(servings)); const query = params.toString(); return request<RecipeRecommendation[]>(`/recipes/recommendations${query ? `?${query}` : ''}`) }
   ,recipePreferences: () => request<RecipePreferences>('/recipes/preferences')

@@ -8,12 +8,12 @@ from sqlalchemy import func, select
 
 from ..database import SessionLocal
 from ..dependencies import HouseholdContext, household_context
-from ..models import AuditLog, Notification, ShoppingListItem, StockMovement
+from ..models import AuditLog, Notification, Receipt, ReceiptLine, ShoppingListItem, StockMovement
 
 router = APIRouter(tags=["events"])
 
 
-def household_revision(household_id: str) -> tuple[int, int, int, int]:
+def household_revision(household_id: str) -> tuple[int, int, int, int, int, int, int, int]:
     with SessionLocal() as db:
         movement_count = db.scalar(
             select(func.count(StockMovement.id)).where(StockMovement.household_id == household_id)
@@ -29,11 +29,33 @@ def household_revision(household_id: str) -> tuple[int, int, int, int]:
                 ShoppingListItem.household_id == household_id
             )
         )
+        receipt_count = db.scalar(
+            select(func.count(Receipt.id)).where(Receipt.household_id == household_id)
+        )
+        receipt_progress = db.scalar(
+            select(func.coalesce(func.sum(Receipt.progress), 0)).where(
+                Receipt.household_id == household_id
+            )
+        )
+        receipt_line_revision = db.scalar(
+            select(func.coalesce(func.sum(ReceiptLine.version), 0)).where(
+                ReceiptLine.household_id == household_id
+            )
+        )
+        failed_receipts = db.scalar(
+            select(func.count(Receipt.id)).where(
+                Receipt.household_id == household_id, Receipt.status == "failed"
+            )
+        )
     return (
         int(movement_count or 0),
         int(audit_count or 0),
         int(notification_count or 0),
         int(shopping_revision or 0),
+        int(receipt_count or 0),
+        int(receipt_progress or 0),
+        int(receipt_line_revision or 0),
+        int(failed_receipts or 0),
     )
 
 

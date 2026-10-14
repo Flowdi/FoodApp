@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     stt_model: str = "small"
     stt_api_key: str = ""
     stt_base_url: str = ""
+    receipt_ocr_mode: str = "vision_llm"
+    receipt_image_retention_days: int = 30
+    receipt_shopping_dedup_hours: int = 12
+    receipt_storage_path: str = "data/receipts"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

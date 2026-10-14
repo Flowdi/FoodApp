@@ -20,6 +20,7 @@ export const messages = {
     shopping: 'Einkaufsliste',
     voice: 'Sprechen',
     receipt: 'Bon',
+    receiptUpload: 'Kassenbon erfassen',
     history: 'Verlauf',
     inventory: 'Inventur',
     settings: 'Einstellungen',
