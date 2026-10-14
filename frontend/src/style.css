@@ -20,3 +20,4 @@
 .receipt-image-canvas{position:relative}.receipt-coordinate{position:absolute;border:3px solid var(--gold);border-radius:5px;background:#e7a83e33;box-shadow:0 0 0 2px #0005;pointer-events:none}
 .receipt-picker-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.receipt-file-button.secondary{background:#e4ebe5;color:var(--green)}.receipt-new-product{min-height:48px;border:1px solid #b7c9bb;border-radius:10px;background:transparent;color:var(--leaf);font-weight:700}@media(max-width:420px){.receipt-picker-actions{grid-template-columns:1fr}}@media(prefers-color-scheme:dark){.receipt-file-button.secondary{background:#294337;color:#edf1ec}.receipt-new-product{border-color:#36463d}}
 .receipt-previews>div{position:relative}.receipt-previews button{position:absolute;top:4px;right:4px;width:48px;height:48px;border:0;border-radius:50%;background:#151816dd;color:#fff;font-size:1.1rem}
+@media(min-width:1024px){.app-shell nav{grid-template-columns:1fr}}
