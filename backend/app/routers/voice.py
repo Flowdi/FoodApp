@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -9,6 +10,7 @@ from ..ai.speech import configured_speech
 from ..database import get_db
 from ..dependencies import HouseholdContext, household_context, require_writer
 from ..models import MovementType, Product, ShoppingListItem, StockBatch, VoiceExecution
+from ..schemas import MovementResult
 from ..services.shopping import claim_open_item, create_purchase
 from ..services.stock import consume_fefo
 from ..services.voice import find_shopping_item, parse_voice_command
@@ -26,9 +28,16 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 
 
 def _finish(
-    db: Session, household_id: str, key: str, message: str, result_type: str
+    db: Session,
+    household_id: str,
+    key: str,
+    message: str,
+    result_type: str,
+    movements: Sequence[MovementResult] | None = None,
 ) -> VoiceExecuteResponse:
-    response = VoiceExecuteResponse.model_validate({"message": message, "result_type": result_type})
+    response = VoiceExecuteResponse.model_validate(
+        {"message": message, "result_type": result_type, "movements": movements or []}
+    )
     db.add(
         VoiceExecution(
             household_id=household_id,
@@ -225,7 +234,7 @@ def execute_voice(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Produkt und Menge sind erforderlich"
             )
-        create_purchase(
+        movement = create_purchase(
             db,
             household_id=household_id,
             product=product,
@@ -244,6 +253,7 @@ def execute_voice(
             payload.idempotency_key,
             f"{action.quantity:g} {action.unit or product.default_unit} {product.name} hinzugefügt",
             "stock",
+            [movement],
         )
 
     if action.intent in {"consume", "discard"}:
@@ -263,7 +273,7 @@ def execute_voice(
             quantity = sum((batch.quantity for batch in matching_batches), Decimal("0"))
         if quantity is None or quantity <= 0:
             raise HTTPException(status.HTTP_409_CONFLICT, "Kein passender Bestand vorhanden")
-        consume_fefo(
+        movements = consume_fefo(
             db,
             household_id=household_id,
             product_id=product.id,
@@ -285,6 +295,7 @@ def execute_voice(
             payload.idempotency_key,
             f"{quantity:g} {unit} {product.name} {verb}",
             "stock",
+            movements,
         )
 
     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unbekannte Sprachaktion")

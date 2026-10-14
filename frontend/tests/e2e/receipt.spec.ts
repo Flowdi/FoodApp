@@ -61,3 +61,11 @@ test('desktop receipt upload offers drag and drop with history column', async ({
   })
   await expect(page.getByRole('button', { name: /1 Bondatei analysieren/ })).toBeEnabled()
 })
+
+test('desktop receipt review has sortable columns beside the receipt area', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-1440')
+  await page.locator('.receipt-file-picker').setInputFiles('public/icon-192.png')
+  await page.getByRole('button', { name: /Bondatei analysieren/ }).click()
+  await expect(page.locator('.receipt-table-head')).toBeVisible()
+  await page.getByRole('button', { name: 'Preis' }).click()
+})

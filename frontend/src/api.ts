@@ -21,6 +21,7 @@ export type QueuedResult = { queued: true; key: string }
 export type VoiceIntent = 'add_to_stock' | 'consume' | 'discard' | 'add_to_shopping' | 'remove_from_shopping' | 'check_shopping' | 'query_stock' | 'unknown'
 export type VoiceAction = { intent: VoiceIntent; product_id?: string; product_name: string; quantity?: string; unit?: string; confidence: number; choices: { id: string; name: string }[]; expected_versions: Record<string, number>; requires_confirmation: boolean }
 export type VoiceInterpretation = { transcript: string; actions: VoiceAction[]; parser: 'rules' | 'llm' }
+export type VoiceExecution = { message: string; result_type: 'stock' | 'shopping' | 'query'; movements: MovementResult[] }
 export type VoicePreferences = { auto_confirm_shopping: boolean; speech_output: boolean; start_listening_on_launch: boolean | null }
 export type ReceiptLine = { id: string; raw_text: string; quantity: string; unit: string; unit_price?: string; total_price?: string; line_kind: string; status: string; confidence: string; product_id?: string; product_name?: string; location_id?: string; best_before?: string; movement_id?: string; coordinates?: Record<string, unknown>; version: number }
 export type Receipt = { id: string; merchant?: string; purchased_at?: string; total?: string; status: 'processing' | 'review' | 'failed' | 'confirmed' | 'reversed'; progress: number; processing_error?: string; analysis_provider?: string; duplicate_of_id?: string; duplicate_message?: string; sum_difference?: string; image_count: number; uploaded_by_name: string; created_at: string; confirmed_at?: string; reversed_at?: string; lines: ReceiptLine[] }
@@ -174,7 +175,7 @@ export const api = {
   ,clearCheckedShopping: () => request<void>('/shopping-list/clear-checked', { method: 'POST' })
   ,shoppingText: () => fetch('/api/v1/shopping-list/export.txt', { headers: { Authorization: `Bearer ${state.token}`, 'X-Household-ID': state.household } }).then(response => response.text())
   ,interpretVoice: (text: string) => request<VoiceInterpretation>('/voice/interpret', { method: 'POST', body: JSON.stringify({ text }) })
-  ,executeVoice: (action: VoiceAction, location_id?: string, idempotency_key = crypto.randomUUID()) => request<{ message: string; result_type: string }>('/voice/execute', { method: 'POST', body: JSON.stringify({ action, location_id: location_id || null, idempotency_key }) })
+  ,executeVoice: (action: VoiceAction, location_id?: string, idempotency_key = crypto.randomUUID()) => request<VoiceExecution>('/voice/execute', { method: 'POST', body: JSON.stringify({ action, location_id: location_id || null, idempotency_key }) })
   ,transcribeVoice: (audio: Blob) => { const form = new FormData(); form.append('audio', audio, 'voice.webm'); return upload<{ text: string }>('/voice/transcribe', form) }
   ,voicePreferences: () => request<VoicePreferences>('/voice/preferences')
   ,setVoicePreferences: (body: VoicePreferences) => request<VoicePreferences>('/voice/preferences', { method: 'PUT', body: JSON.stringify(body) })

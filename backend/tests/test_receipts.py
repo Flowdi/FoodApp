@@ -85,6 +85,37 @@ async def test_receipt_alias_is_learned_and_reused(client, auth) -> None:
         assert alias is not None and alias.usage_count == 2
 
 
+async def test_receipt_alias_wins_over_llm_suggestion(client, auth) -> None:
+    with client.session_factory() as db:
+        aliased = db.get(Product, auth[2]["id"])
+        assert aliased is not None
+        suggested = Product(
+            household_id=auth[0]["X-Household-ID"], name="Falscher Vorschlag", default_unit="piece"
+        )
+        db.add(suggested)
+        db.flush()
+        learn_alias(db, auth[0]["X-Household-ID"], aliased.id, "MARKT MILCH SPEZIAL")
+        db.commit()
+        receipt = add_receipt(db, auth, image_hash="alias-priority".ljust(64, "0"))
+        apply_extraction(
+            db,
+            receipt,
+            ExtractedReceipt.model_validate(
+                {
+                    "lines": [
+                        {
+                            "raw_text": "MARKT MILCH SPEZIAL",
+                            "suggested_product_id": suggested.id,
+                            "confidence": 1,
+                        }
+                    ]
+                }
+            ),
+            Settings(),
+        )
+        assert receipt.lines[0].product_id == aliased.id
+
+
 async def test_rule_parser_recognizes_weight_deposit_and_discount() -> None:
     parsed = parse_receipt_text(
         "Markt\n12.10.2026 18:20\nBananen 0,512 kg 1,53\nPFAND 0,25\nRABATT -0,20\nSUMME 1,58"

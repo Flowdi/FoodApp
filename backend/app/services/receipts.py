@@ -231,14 +231,6 @@ def extract_receipt(
 def _match_product(
     db: Session, household_id: str, line: ExtractedReceiptLine
 ) -> tuple[Product | None, float]:
-    if line.suggested_product_id:
-        suggested = db.scalar(
-            select(Product).where(
-                Product.id == line.suggested_product_id, Product.household_id == household_id
-            )
-        )
-        if suggested:
-            return suggested, max(line.confidence, 0.8)
     needle = normalize(line.raw_text)[:180]
     alias_match = db.execute(
         select(ProductAlias, Product)
@@ -262,7 +254,17 @@ def _match_product(
         key=lambda item: item[0],
         reverse=True,
     )
-    return (ranked[0][1], ranked[0][0]) if ranked and ranked[0][0] >= 0.6 else (None, 0.0)
+    if ranked and ranked[0][0] >= 0.6:
+        return ranked[0][1], ranked[0][0]
+    if line.suggested_product_id:
+        suggested = db.scalar(
+            select(Product).where(
+                Product.id == line.suggested_product_id, Product.household_id == household_id
+            )
+        )
+        if suggested:
+            return suggested, max(line.confidence, 0.8)
+    return None, 0.0
 
 
 def _recent_shopping_quantity(

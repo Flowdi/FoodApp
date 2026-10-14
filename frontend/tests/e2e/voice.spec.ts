@@ -9,6 +9,7 @@ async function mockApi(page: Page) {
   await page.route('**/api/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
     const json = (value: unknown) => route.fulfill({ json: value })
+    if (path === '/api/v1/products' && route.request().method() === 'POST') return json({ id: 'product-new', ...route.request().postDataJSON(), barcodes: [] })
     if (path === '/api/v1/products') return json([{ id: 'product-1', name: 'Milch', category: 'Kühlregal', default_unit: 'l', barcodes: [] }])
     if (path === '/api/v1/locations') return json([{ id: 'location-1', name: 'Kühlschrank' }])
     if (path === '/api/v1/stock' || path === '/api/v1/movements' || path === '/api/v1/shopping-list' || path === '/api/v1/notifications' || path === '/api/v1/households/members' || path === '/api/v1/recipes/recommendations') return json([])
@@ -19,8 +20,17 @@ async function mockApi(page: Page) {
       if (route.request().method() === 'PUT') return json(JSON.parse(route.request().postData() || '{}'))
       return json({ auto_confirm_shopping: false, speech_output: false, start_listening_on_launch: true })
     }
-    if (path === '/api/v1/voice/interpret') return json({ transcript: 'Setze zwei Milch auf die Einkaufsliste', parser: 'rules', actions: [{ intent: 'add_to_shopping', product_id: 'product-1', product_name: 'Milch', quantity: '2', unit: 'l', confidence: .96, choices: [], expected_versions: {}, requires_confirmation: true }] })
-    if (path === '/api/v1/voice/execute') return json({ message: 'Milch steht auf der Einkaufsliste', result_type: 'shopping' })
+    if (path === '/api/v1/voice/interpret') {
+      const text = route.request().postDataJSON().text
+      if (text.includes('Quinoa')) return json({ transcript: text, parser: 'rules', actions: [{ intent: 'add_to_stock', product_name: 'Quinoa', quantity: '1', unit: 'piece', confidence: .7, choices: [], expected_versions: {}, requires_confirmation: true }] })
+      if (text.includes('gekauft')) return json({ transcript: text, parser: 'rules', actions: [{ intent: 'add_to_stock', product_id: 'product-1', product_name: 'Milch', quantity: '1', unit: 'l', confidence: .98, choices: [], expected_versions: {}, requires_confirmation: true }] })
+      return json({ transcript: text, parser: 'rules', actions: [{ intent: 'add_to_shopping', product_id: 'product-1', product_name: 'Milch', quantity: '2', unit: 'l', confidence: .96, choices: [], expected_versions: {}, requires_confirmation: true }] })
+    }
+    if (path === '/api/v1/voice/execute') {
+      const action = route.request().postDataJSON().action
+      if (action.intent === 'add_to_stock') return json({ message: '1 l Milch hinzugefügt', result_type: 'stock', movements: [{ movement: { id: 'movement-1' }, batch: { id: 'batch-1', product_id: 'product-1', location_id: 'location-1', quantity: '1', unit: 'l', version: 2, product: { id: 'product-1', name: 'Milch', default_unit: 'l', barcodes: [] } }, replayed: false }] })
+      return json({ message: 'Milch steht auf der Einkaufsliste', result_type: 'shopping', movements: [] })
+    }
     if (path === '/api/v1/events') return route.fulfill({ status: 204 })
     return json({})
   })
@@ -39,7 +49,7 @@ test('voice draft remains editable and requires confirmation', async ({ page }) 
   await page.getByLabel('Menge').fill('3')
   const confirm = page.getByRole('button', { name: 'Bestätigen' })
   const box = await confirm.boundingBox()
-  expect(box?.height).toBeGreaterThanOrEqual(44)
+  expect(box?.height).toBeGreaterThanOrEqual(48)
   await confirm.click()
   await expect(page.getByText(/Milch steht auf der Einkaufsliste/)).toBeVisible()
 })
@@ -49,6 +59,18 @@ test('voice layout adapts to desktop', async ({ page }, testInfo) => {
   const capture = await page.locator('.voice-capture').boundingBox()
   const results = await page.locator('.voice-results').boundingBox()
   expect(results?.x).toBeGreaterThan(capture?.x || 0)
+})
+
+test('voice stock booking exposes undo and unknown products expose creation', async ({ page }) => {
+  await page.getByLabel('Erkannter oder eingegebener Text').fill('Ich habe Milch gekauft')
+  await page.getByRole('button', { name: 'Befehl prüfen' }).click()
+  await page.getByRole('button', { name: 'Bestätigen' }).click()
+  await expect(page.locator('.snackbar')).toContainText('Buchung gespeichert')
+  await expect(page.locator('.snackbar').getByRole('button', { name: 'Rückgängig' })).toBeVisible()
+
+  await page.getByLabel('Erkannter oder eingegebener Text').fill('Quinoa gekauft')
+  await page.getByRole('button', { name: 'Befehl prüfen' }).click()
+  await expect(page.getByRole('button', { name: /Neues Produkt anlegen/ })).toBeVisible()
 })
 
 test('direct voice route shows tap fallback when microphone permission is denied', async ({ page }) => {

@@ -42,10 +42,45 @@ async def test_confirmed_voice_actions_are_idempotent(
     second = await client.post("/api/v1/voice/execute", headers=headers, json=body)
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json()
+    assert len(first.json()["movements"]) == 1
+    assert first.json()["movements"][0]["movement"]["client_info"] == "voice"
 
     stock = await client.get("/api/v1/stock", headers=headers)
     batches = [item for item in stock.json() if item["product_id"] == product["id"]]
     assert sum(float(item["quantity"]) for item in batches) == 2
+
+
+async def test_voice_stock_response_can_be_reversed(
+    client: httpx.AsyncClient, auth: tuple[dict[str, str], dict, dict]
+) -> None:
+    headers, location, product = auth
+    response = await client.post(
+        "/api/v1/voice/execute",
+        headers=headers,
+        json={
+            "action": {
+                "intent": "add_to_stock",
+                "product_id": product["id"],
+                "product_name": product["name"],
+                "quantity": 1,
+                "unit": "l",
+                "confidence": 1,
+            },
+            "location_id": location["id"],
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+    movement = response.json()["movements"][0]
+    reversed_response = await client.post(
+        f"/api/v1/movements/{movement['movement']['id']}/reverse",
+        headers=headers,
+        json={
+            "expected_version": movement["batch"]["version"],
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+    assert reversed_response.status_code == 200
+    assert (await client.get("/api/v1/stock", headers=headers)).json() == []
 
 
 async def test_voice_shopping_free_text_and_query(

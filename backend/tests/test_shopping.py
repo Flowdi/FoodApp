@@ -148,6 +148,37 @@ async def test_finish_trip_books_checked_items(client, auth):
     assert replay.json()[0]["movement"]["replayed"] is True
 
 
+async def test_free_text_can_be_assigned_before_finish_trip(client, auth):
+    await client.patch(
+        "/api/v1/households/current",
+        headers=auth[0],
+        json={"shopping_check_mode": "finish_trip"},
+    )
+    created = await client.post(
+        "/api/v1/shopping-list",
+        headers=auth[0],
+        json={
+            "free_text": "Milch vom Markt",
+            "quantity": 1,
+            "unit": "l",
+            "source": "manual",
+            "idempotency_key": "28282828-2828-4282-8282-282828282828",
+        },
+    )
+    checked = await client.post(
+        f"/api/v1/shopping-list/{created.json()['id']}/check",
+        headers=auth[0],
+        json={
+            "expected_version": created.json()["version"],
+            "product_id": auth[2]["id"],
+            "idempotency_key": "29292929-2929-4292-8292-292929292929",
+        },
+    )
+    assert checked.status_code == 200
+    assert checked.json()["item"]["product_id"] == auth[2]["id"]
+    assert checked.json()["item"]["product_name"] == auth[2]["name"]
+
+
 async def test_viewer_cannot_change_shopping_list(client, auth):
     with client.session_factory() as db:
         membership = db.scalar(

@@ -76,10 +76,10 @@ Mengen. Vor jeder Bestandsänderung erscheint eine editierbare Bestätigungskart
 Einkaufslisten-Einträge können auf Wunsch nach drei Sekunden automatisch bestätigt werden.
 
 Die lokale Spracherkennung über Faster Whisper ist der Standard (`STT_PROVIDER=faster-whisper`,
-`STT_MODEL=small`). Das Modell wird beim ersten Einsatz lokal geladen; Audiodaten verlassen den
+`STT_MODEL_SIZE=small`). Das Modell wird beim ersten Einsatz lokal geladen; Audiodaten verlassen den
 Server dabei nicht.
 
-Alternativ kann `STT_PROVIDER=openai` mit `STT_API_KEY`, `STT_BASE_URL` und `STT_MODEL`
+Alternativ kann `STT_PROVIDER=openai` mit `STT_API_KEY`, `STT_BASE_URL` und `STT_MODEL_SIZE`
 verwendet werden. Für mehrdeutige Befehle lässt sich der gemeinsame strukturierte KI-Provider
 mit `LLM_PROVIDER=openai|anthropic|ollama`, `LLM_MODEL`, `LLM_API_KEY` und `LLM_BASE_URL`
 aktivieren. Antworten werden mit Pydantic validiert und einmal repariert; pro Haushalt gilt das
@@ -120,7 +120,24 @@ nicht doppelt gebucht. Händler, Zeitpunkt, Summe und Bild-Hash schützen vor Bo
 bewusstes erneutes Einbuchen muss ausdrücklich bestätigt werden. **Gesamten Bon stornieren**
 erzeugt ausschließlich unveränderliche Gegenbuchungen.
 
-Konfiguration in `.env`:
+### Konfigurationsübersicht für E2 bis E4
+
+| Variable | Standard | Bedeutung |
+| --- | --- | --- |
+| `APP_NAME` | `Vorrat` | Name der PWA und des Android-Startbefehls |
+| `STT_PROVIDER` | `faster-whisper` | Spracherkennung: `faster-whisper`, `openai` oder `none` |
+| `STT_MODEL_SIZE` | `small` | Lokale Whisper-Größe beziehungsweise Modellname des STT-Anbieters; `STT_MODEL` bleibt als Übergangs-Alias gültig |
+| `STT_API_KEY` / `STT_BASE_URL` | leer | Ausschließlich serverseitige Zugangsdaten für Cloud-STT |
+| `LLM_PROVIDER` | `none` | Strukturierter KI-Anbieter: `openai`, `anthropic`, `ollama` oder `none` |
+| `LLM_MODEL` / `LLM_API_KEY` / `LLM_BASE_URL` | leer | Modell und ausschließlich serverseitige Anbieter-Konfiguration |
+| `LLM_TIMEOUT_SECONDS` | `15` | Zeitlimit je KI-Anfrage |
+| `LLM_DAILY_LIMIT_PER_HOUSEHOLD` | `50` | Tageslimit je Haushalt |
+| `RECEIPT_OCR_MODE` | `vision_llm` | `vision_llm`, `tesseract_llm` oder `tesseract_rules` |
+| `RECEIPT_IMAGE_RETENTION_DAYS` | `30` | Aufbewahrung privater Bonbilder; `0` löscht nach Einbuchung |
+| `RECEIPT_SHOPPING_DEDUP_HOURS` | `12` | Zeitfenster für den Einkaufslisten-Dublettenschutz |
+| `RECEIPT_STORAGE_PATH` | `data/receipts` | Privater, nicht öffentlich ausgelieferter Bildspeicher |
+
+Beispiel für die Bon-Konfiguration in `.env`:
 
 ```dotenv
 # vision_llm, tesseract_llm oder tesseract_rules
@@ -202,6 +219,17 @@ Die Vite-Entwicklung leitet `/api` an `127.0.0.1:8000` weiter.
 4. Google Assistant oder Gemini mit „Hey Google, öffne Vorrat“ starten. Ist der Bildschirm gesperrt, muss Android je nach Gerät, Assistent- und Sperrbildschirm-Einstellung zuerst entsperrt werden. Diese Einschränkung wird vom Betriebssystem vorgegeben.
 
 Alternativ öffnet die URL `/voice` beziehungsweise `/?mode=voice` direkt die Sprachansicht. Im Android-Launcher stehen nach der Installation außerdem die Kurzbefehle **Sprechen**, **Einkaufsliste**, **Kassenbon scannen** und **Bestand** zur Verfügung. Die rotierende, standardmäßig 30 Tage gültige Refresh-Token-Sitzung sorgt dafür, dass ein Sprachstart nicht bei jedem Aufruf erneut am Login endet.
+
+### Manuelle Android-Abnahme
+
+Diese Prüfung benötigt ein echtes Android-Gerät und kann nicht durch Playwright emuliert werden:
+
+- [ ] PWA installieren, anmelden und anschließend vollständig schließen.
+- [ ] „Hey Google, öffne Vorrat“ ausführen und prüfen, dass die installierte PWA startet.
+- [ ] Den Launcher-Kurzbefehl **Sprechen** öffnen und prüfen, dass `/voice` nach Login und Refresh erhalten bleibt.
+- [ ] Mikrofon erlauben, einen Befehl aufnehmen und prüfen, dass der Android-Mikrofonindikator nach Stille beziehungsweise spätestens nach 15 Sekunden verschwindet.
+- [ ] Den Start bei gesperrtem Gerät testen und die geräteabhängige Entsperr-Abfrage dokumentieren.
+- [ ] Mikrofon verweigern und den sichtbaren **Tippen zum Sprechen**-/Texteingabe-Fallback prüfen.
 
 Falls der Start nicht funktioniert:
 

@@ -140,6 +140,9 @@ def check_item(
             )
         raise
     product = scoped_product(db, household_id, payload.product_id or item.product_id)
+    if product is not None and item.product_id != product.id:
+        item.product = product
+        item.free_text = None
     movement = None
     household = db.get(Household, household_id)
     should_book = bool(household and household.shopping_check_mode == "instant" and product)
