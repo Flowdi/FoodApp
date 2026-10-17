@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     anthropic_base_url: str = "https://api.anthropic.com/v1"
     ollama_model: str = "qwen3:4b"
     ollama_base_url: str = "http://host.docker.internal:11434"
+    llm_provider: str = "none"
+    llm_model: str = ""
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_timeout_seconds: float = 15
+    llm_daily_limit_per_household: int = 50
+    stt_provider: str = "faster-whisper"
+    stt_model: str = "small"
+    stt_api_key: str = ""
+    stt_base_url: str = ""
 
     @field_validator("cors_origins", mode="before")
     @classmethod

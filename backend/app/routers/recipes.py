@@ -128,12 +128,12 @@ def recommendations(
         servings,
         warning_days,
     )
-    ranker = configured_ranker(get_settings())
+    ranker = configured_ranker(get_settings(), db, household_id)
     if ranker is None or not result:
         return result
     try:
         return apply_llm_ranking(result, ranker.rank(result), ranker.name)
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+    except (httpx.HTTPError, HTTPException, ValueError, KeyError, TypeError) as exc:
         logger.warning("Recipe ranking provider failed; using deterministic order: %s", exc)
         return result
 

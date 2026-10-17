@@ -27,7 +27,7 @@ class FakeResponse:
     [
         (
             "openai",
-            {"output": [{"content": [{"type": "output_text", "text": "{}"}]}]},
+            {"choices": [{"message": {"content": "{}"}}], "usage": {}},
             OpenAIRanker,
         ),
         ("anthropic", {"content": [{"type": "text", "text": "{}"}]}, AnthropicRanker),
@@ -41,7 +41,7 @@ def test_provider_selection_and_request_shape(monkeypatch, provider, payload, ra
         captured.update({"url": url, **kwargs})
         return FakeResponse(payload)
 
-    monkeypatch.setattr("backend.app.services.recipe_rankers.httpx.post", fake_post)
+    monkeypatch.setattr("backend.app.ai.providers.httpx.post", fake_post)
     settings = Settings(
         recipe_ranker_provider=provider,
         openai_api_key="test-openai",
@@ -63,7 +63,7 @@ def test_ollama_uses_json_schema(monkeypatch) -> None:
         body = json.dumps({"ranking": []})
         return FakeResponse({"message": {"content": body}})
 
-    monkeypatch.setattr("backend.app.services.recipe_rankers.httpx.post", fake_post)
+    monkeypatch.setattr("backend.app.ai.providers.httpx.post", fake_post)
     ranker = OllamaRanker(Settings(recipe_ranker_provider="ollama"))
     assert ranker.rank([]) == []
     assert isinstance(captured["json"]["format"], dict)

@@ -2,8 +2,17 @@ import json
 from dataclasses import dataclass
 from typing import Protocol
 
-import httpx
+from pydantic import BaseModel, ValidationError
+from sqlalchemy.orm import Session
 
+from ..ai.providers import (
+    AnthropicProvider,
+    LLMProvider,
+    OllamaProvider,
+    OpenAIProvider,
+    configured_llm,
+    generate_structured,
+)
 from ..config import Settings
 from ..schemas import RecipeRecommendation
 
@@ -14,32 +23,19 @@ class RankedRecipe:
     explanation: str
 
 
+class RankingItem(BaseModel):
+    recipe_id: str
+    explanation: str
+
+
+class RankingResponse(BaseModel):
+    ranking: list[RankingItem]
+
+
 class RecipeRanker(Protocol):
     name: str
 
     def rank(self, recommendations: list[RecipeRecommendation]) -> list[RankedRecipe]: ...
-
-
-def _ranking_schema() -> dict[str, object]:
-    return {
-        "type": "object",
-        "properties": {
-            "ranking": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "recipe_id": {"type": "string"},
-                        "explanation": {"type": "string"},
-                    },
-                    "required": ["recipe_id", "explanation"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["ranking"],
-        "additionalProperties": False,
-    }
 
 
 def _prompt(recommendations: list[RecipeRecommendation]) -> str:
@@ -66,116 +62,117 @@ def _prompt(recommendations: list[RecipeRecommendation]) -> str:
     )
 
 
-def _parse_ranking(text: str) -> list[RankedRecipe]:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.removeprefix("```json").removeprefix("```")
-        cleaned = cleaned.removesuffix("```").strip()
-    payload = json.loads(cleaned)
-    ranking = payload.get("ranking") if isinstance(payload, dict) else None
-    if not isinstance(ranking, list):
-        raise ValueError("Ungültige Ranking-Antwort")
-    result: list[RankedRecipe] = []
-    for item in ranking:
-        if not isinstance(item, dict):
-            continue
-        recipe_id = item.get("recipe_id")
-        explanation = item.get("explanation")
-        if isinstance(recipe_id, str) and isinstance(explanation, str):
-            result.append(RankedRecipe(recipe_id, explanation[:300]))
-    return result
-
-
-class OpenAIRanker:
-    name = "openai"
-
-    def __init__(self, settings: Settings) -> None:
+class ProviderRecipeRanker:
+    def __init__(
+        self,
+        provider: LLMProvider,
+        settings: Settings,
+        db: Session | None = None,
+        household_id: str | None = None,
+    ) -> None:
+        self.provider = provider
         self.settings = settings
+        self.db = db
+        self.household_id = household_id
+        self.name = provider.name
 
     def rank(self, recommendations: list[RecipeRecommendation]) -> list[RankedRecipe]:
-        response = httpx.post(
-            f"{self.settings.openai_base_url.rstrip('/')}/responses",
-            headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
-            json={
-                "model": self.settings.openai_model,
-                "input": _prompt(recommendations),
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": "recipe_ranking",
-                        "strict": True,
-                        "schema": _ranking_schema(),
-                    }
-                },
-            },
-            timeout=self.settings.recipe_ranker_timeout_seconds,
+        prompt = _prompt(recommendations)
+        if self.db is not None and self.household_id is not None:
+            result = generate_structured(
+                self.db,
+                household_id=self.household_id,
+                feature="recipe_ranking",
+                prompt=prompt,
+                response_model=RankingResponse,
+                provider=self.provider,
+                settings=self.settings,
+            )
+            return [RankedRecipe(item.recipe_id, item.explanation) for item in result.ranking]
+        current_prompt = prompt
+        last_error: ValidationError | ValueError | None = None
+        for attempt in range(2):
+            try:
+                raw, _, _ = self.provider.text_to_json(
+                    current_prompt, RankingResponse.model_json_schema()
+                )
+                result = RankingResponse.model_validate(raw)
+                return [RankedRecipe(item.recipe_id, item.explanation) for item in result.ranking]
+            except (ValidationError, ValueError) as exc:
+                last_error = exc
+                current_prompt = f"{prompt}\nUngültige vorige Antwort: {exc}. Nur gültiges JSON."
+                if attempt == 1:
+                    break
+        raise ValueError("Ungültige Ranking-Antwort") from last_error
+
+
+def _legacy_settings(settings: Settings, provider: str) -> Settings:
+    if provider == "openai":
+        return settings.model_copy(
+            update={
+                "llm_provider": provider,
+                "llm_api_key": settings.openai_api_key,
+                "llm_model": settings.openai_model,
+                "llm_base_url": settings.openai_base_url,
+                "llm_timeout_seconds": settings.recipe_ranker_timeout_seconds,
+            }
         )
-        response.raise_for_status()
-        payload = response.json()
-        parts = [
-            part.get("text", "")
-            for output in payload.get("output", [])
-            for part in output.get("content", [])
-            if part.get("type") == "output_text"
-        ]
-        return _parse_ranking("".join(parts))
+    if provider == "anthropic":
+        return settings.model_copy(
+            update={
+                "llm_provider": provider,
+                "llm_api_key": settings.anthropic_api_key,
+                "llm_model": settings.anthropic_model,
+                "llm_base_url": settings.anthropic_base_url,
+                "llm_timeout_seconds": settings.recipe_ranker_timeout_seconds,
+            }
+        )
+    return settings.model_copy(
+        update={
+            "llm_provider": provider,
+            "llm_model": settings.ollama_model,
+            "llm_base_url": settings.ollama_base_url,
+            "llm_timeout_seconds": settings.recipe_ranker_timeout_seconds,
+        }
+    )
 
 
-class AnthropicRanker:
-    name = "anthropic"
-
+class OpenAIRanker(ProviderRecipeRanker):
     def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-
-    def rank(self, recommendations: list[RecipeRecommendation]) -> list[RankedRecipe]:
-        response = httpx.post(
-            f"{self.settings.anthropic_base_url.rstrip('/')}/messages",
-            headers={
-                "x-api-key": self.settings.anthropic_api_key,
-                "anthropic-version": "2023-06-01",
-            },
-            json={
-                "model": self.settings.anthropic_model,
-                "max_tokens": 1200,
-                "messages": [{"role": "user", "content": _prompt(recommendations)}],
-            },
-            timeout=self.settings.recipe_ranker_timeout_seconds,
-        )
-        response.raise_for_status()
-        content = response.json().get("content", [])
-        return _parse_ranking("".join(item.get("text", "") for item in content))
+        mapped = _legacy_settings(settings, "openai")
+        super().__init__(OpenAIProvider(mapped), mapped)
 
 
-class OllamaRanker:
-    name = "ollama"
-
+class AnthropicRanker(ProviderRecipeRanker):
     def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-
-    def rank(self, recommendations: list[RecipeRecommendation]) -> list[RankedRecipe]:
-        response = httpx.post(
-            f"{self.settings.ollama_base_url.rstrip('/')}/api/chat",
-            json={
-                "model": self.settings.ollama_model,
-                "messages": [{"role": "user", "content": _prompt(recommendations)}],
-                "format": _ranking_schema(),
-                "stream": False,
-            },
-            timeout=self.settings.recipe_ranker_timeout_seconds,
-        )
-        response.raise_for_status()
-        return _parse_ranking(response.json()["message"]["content"])
+        mapped = _legacy_settings(settings, "anthropic")
+        super().__init__(AnthropicProvider(mapped), mapped)
 
 
-def configured_ranker(settings: Settings) -> RecipeRanker | None:
-    provider = settings.recipe_ranker_provider.casefold()
-    if provider == "openai" and settings.openai_api_key:
-        return OpenAIRanker(settings)
-    if provider == "anthropic" and settings.anthropic_api_key:
-        return AnthropicRanker(settings)
-    if provider == "ollama":
-        return OllamaRanker(settings)
-    return None
+class OllamaRanker(ProviderRecipeRanker):
+    def __init__(self, settings: Settings) -> None:
+        mapped = _legacy_settings(settings, "ollama")
+        super().__init__(OllamaProvider(mapped), mapped)
+
+
+def configured_ranker(
+    settings: Settings, db: Session | None = None, household_id: str | None = None
+) -> RecipeRanker | None:
+    if settings.llm_provider.casefold() != "none":
+        provider = configured_llm(settings)
+        return ProviderRecipeRanker(provider, settings, db, household_id) if provider else None
+    provider_name = settings.recipe_ranker_provider.casefold()
+    legacy: RecipeRanker | None = None
+    if provider_name == "openai" and settings.openai_api_key:
+        legacy = OpenAIRanker(settings)
+    elif provider_name == "anthropic" and settings.anthropic_api_key:
+        legacy = AnthropicRanker(settings)
+    elif provider_name == "ollama":
+        legacy = OllamaRanker(settings)
+    if isinstance(legacy, ProviderRecipeRanker):
+        legacy.db = db
+        legacy.household_id = household_id
+    return legacy
 
 
 def apply_llm_ranking(
@@ -191,7 +188,7 @@ def apply_llm_ranking(
         seen.add(item.recipe_id)
         result.append(
             recommendation.model_copy(
-                update={"explanation": item.explanation, "ranking_source": source}
+                update={"explanation": item.explanation[:300], "ranking_source": source}
             )
         )
     result.extend(item for item in recommendations if item.recipe.id not in seen)
