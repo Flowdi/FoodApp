@@ -1,5 +1,16 @@
 # Architekturentscheidungen
 
+## Packungsbasierter Bestand
+
+- Bestands-, Inventur-, Mindestbestands- und Einkaufslistenzahlen sind ganze Packungen.
+- Pro Haushalt und Produkt existiert genau eine Bestandsposition. Kategorie und Packungsgröße sind
+  Metadaten und werden nicht zur laufenden Mengenberechnung verwendet.
+- Migration `0016` rundet bekannte Altbestände anhand der Packungsgröße auf, setzt unbekannte
+  Chargen auf eine Packung und führt mehrere Produktchargen zusammen. Das Bewegungsjournal bleibt
+  unverändert; nur seine Fremdschlüssel werden auf die zusammengeführte Position umgebogen.
+- Umlagern verschiebt deshalb immer die vollständige Produktposition und schreibt eine neutrale
+  Transferbewegung. Teilbestände an mehreren Lagerorten sind im neuen Modell nicht vorgesehen.
+
 ## E1 – Persistente Einkaufsliste
 
 - `shopping_list_items` ist die einzige persistente Quelle für manuelle, Mindestbestands- und
@@ -58,3 +69,27 @@
   des Umfangs.
 - Lighthouse 11.7.1 bleibt für den CI-Check gepinnt, weil diese Version noch die PWA-Kategorie
   inklusive Installierbarkeits-, Splashscreen- und Maskable-Icon-Audits bereitstellt.
+
+## E4 – Kassenbon-Erkennung
+
+- Ein Bon ist ein eigener, haushaltsbezogener Arbeitsvorgang mit unveränderlich referenzierten
+  Bestandsbuchungen. Erkannte Zeilen dürfen bis zur Bestätigung bearbeitet werden; danach sind nur
+  Gegenbuchungen für den vollständigen Bon zulässig.
+- Mehrere Fotos und PDFs gehören zu einem Bon. Der Browser verkleinert unterstützte Rasterbilder
+  vorab, der Server normalisiert sie für Vision-Provider erneut und speichert Originaluploads in
+  einem nicht öffentlich ausgelieferten, haushaltsgetrennten Verzeichnis.
+- Die Erkennung ist über `vision_llm`, `tesseract_llm` und `tesseract_rules` austauschbar. Nur der
+  erste Modus überträgt Bilder; die API liefert diese Datenschutzentscheidung und die
+  Aufbewahrungsfrist explizit an die Oberfläche.
+- FastAPI-Hintergrundaufgaben bilden die lokale, selbst gehostete Ausführung ab. Status und
+  Fortschritt werden persistent gespeichert und vom Client abgefragt; die Servicegrenze erlaubt
+  später den Austausch gegen eine dauerhafte Worker-Queue.
+- Der Dublettenfingerprint kombiniert normalisierten Händler, Kaufzeit auf Minutenebene, Summe und
+  Bild-Hash. Ein Treffer blockiert standardmäßig, kann aber nach sichtbarer Warnung bewusst
+  überschrieben werden.
+- Einkaufslistenbuchungen der letzten konfigurierten Stunden werden mengenbezogen abgezogen.
+  Beim Bestätigen werden offene passende Einträge mit exakt der neu erzeugten Bonbuchung verknüpft,
+  damit niemals eine zweite Bestandsbewegung entsteht.
+- Bonzeilen erhalten eigene Optimistic-Lock-Versionen. Die Bestätigung prüft alle Versionen und
+  clientgenerierten UUIDs und schreibt alle Käufe, Alias-Lerneffekte und Listenverknüpfungen in
+  einer Datenbanktransaktion.

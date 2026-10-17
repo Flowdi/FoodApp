@@ -5,7 +5,7 @@ const product = {
   name: 'Milch',
   brand: 'Hofgut',
   category: 'Kühlregal',
-  default_unit: 'l',
+  default_unit: 'package',
   default_location_id: 'location-1',
   barcodes: [],
 }
@@ -15,8 +15,8 @@ const shoppingItem = {
   product_id: product.id,
   product_name: product.name,
   category: product.category,
-  quantity: '2.000',
-  unit: 'l',
+  quantity: 2,
+  unit: 'package',
   source: 'manual',
   status: 'open',
   version: 1,
@@ -33,6 +33,7 @@ async function mockApi(page: Page) {
   await page.route('**/api/v1/**', async route => {
     const path = new URL(route.request().url()).pathname
     const json = (value: unknown) => route.fulfill({ json: value })
+    if (path === '/api/v1/auth/bootstrap') return json({ memberships: [{ household_id: 'household-1', role: 'owner' }] })
     if (path === '/api/v1/stock') return json([])
     if (path === '/api/v1/products') return json([product])
     if (path === '/api/v1/locations') return json([{ id: 'location-1', name: 'Kühlschrank' }])
@@ -46,6 +47,10 @@ async function mockApi(page: Page) {
     }
     if (path.endsWith('/check')) {
       items = items.map(item => item.id === 'shopping-1' ? { ...item, status: 'checked', version: 2, checked_by_name: 'Test' } : item)
+      return json({ item: items[0] })
+    }
+    if (path.endsWith('/undo')) {
+      items = items.map(item => item.id === 'shopping-1' ? { ...item, status: 'open', version: 3, checked_by_name: undefined } : item)
       return json({ item: items[0] })
     }
     if (path === '/api/v1/notifications') return json([])
@@ -74,18 +79,39 @@ test('shopping flow is touch friendly on mobile', async ({ page }, testInfo) => 
   expect(box?.height).toBeGreaterThanOrEqual(48)
   await expect(page.locator('nav')).toHaveCSS('position', 'fixed')
   await checkButton.click()
-  await expect(page.getByText('von Test')).toBeVisible()
+  await expect(page.getByText('Erledigt von Test')).toBeVisible()
+  await expect(page.getByText('Milch')).toHaveCSS('text-decoration-line', 'line-through')
+  await page.getByRole('button', { name: 'Milch wieder öffnen' }).click()
+  await expect(page.getByRole('button', { name: 'Milch abhaken' })).toBeVisible()
 })
 
-test('shopping list uses sidebar and columns on desktop', async ({ page }, testInfo) => {
+test('shopping list uses sidebar and one compact list on desktop', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-1440')
   const nav = await page.locator('nav').boundingBox()
+  const navButtons = await page.locator('nav button').all()
+  const firstNavButton = await navButtons[0].boundingBox()
+  const secondNavButton = await navButtons[1].boundingBox()
   const form = await page.locator('.shopping-add-panel').boundingBox()
   const list = await page.locator('.shopping-list-panel').boundingBox()
   expect(nav?.x).toBe(0)
   expect(nav?.height).toBe(900)
+  expect(secondNavButton?.y).toBeGreaterThan(firstNavButton?.y || 0)
+  expect(Math.abs((secondNavButton?.x || 0) - (firstNavButton?.x || 0))).toBeLessThan(2)
   expect(form?.x).toBeGreaterThan(list?.x || 0)
+  await expect(page.locator('.shopping-item')).toBeVisible()
+  await expect(page.getByText('2×')).toBeVisible()
   await expect(page.getByText(/Tastatur: N neuer Eintrag/)).toBeVisible()
   await page.keyboard.press('n')
   await expect(page.locator('#shopping-product')).toBeFocused()
+})
+
+test('finish-trip mode reviews all checked products together', async ({ page }) => {
+  await page.route('**/api/v1/households/current', route => route.fulfill({ json: { id: 'household-1', name: 'Zuhause', timezone: 'Europe/Berlin', expiry_warning_days: 3, shopping_check_mode: 'finish_trip' } }))
+  await page.reload()
+  await page.getByRole('button', { name: /Einkaufsliste/ }).click()
+  await page.getByRole('button', { name: 'Milch abhaken' }).click()
+  await page.getByRole('button', { name: 'Einkauf abschließen' }).click()
+  await expect(page.getByRole('heading', { name: 'Einkauf prüfen und einbuchen' })).toBeVisible()
+  await expect(page.locator('.shopping-trip-row select')).toHaveValue('location-1')
+  await expect(page.getByRole('button', { name: 'Alle Artikel einbuchen' })).toBeEnabled()
 })

@@ -12,7 +12,7 @@ async def create_recipe(client, auth):
     oats_response = await client.post(
         "/api/v1/products",
         headers=headers,
-        json={"name": "Haferflocken", "default_unit": "g", "barcodes": []},
+        json={"name": "Haferflocken", "default_unit": "package", "barcodes": []},
     )
     oats = oats_response.json()
     response = await client.post(
@@ -24,8 +24,8 @@ async def create_recipe(client, auth):
             "instructions": "Alles aufkochen.",
             "tags": ["Frühstück", "Vegetarisch"],
             "ingredients": [
-                {"product_id": milk["id"], "quantity": 0.5, "unit": "l"},
-                {"product_id": oats["id"], "quantity": 100, "unit": "g"},
+                {"product_id": milk["id"], "quantity": 1, "unit": "package"},
+                {"product_id": oats["id"], "quantity": 1, "unit": "package"},
             ],
         },
     )
@@ -57,8 +57,8 @@ async def test_recommendations_use_inventory_expiry_and_units(client, auth):
         json={
             "product_id": auth[2]["id"],
             "location_id": auth[1]["id"],
-            "quantity": 500,
-            "unit": "ml",
+            "quantity": 1,
+            "unit": "package",
             "best_before": (date.today() + timedelta(days=1)).isoformat(),
             "idempotency_key": "12121212-1212-4212-8212-121212121212",
         },

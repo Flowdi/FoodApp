@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, date, datetime
-from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
@@ -17,8 +16,7 @@ from ..models import (
     StorageLocation,
 )
 from ..schemas import MovementResult
-from ..units import sum_converted
-from .stock import apply_delta, existing_result
+from .stock import apply_delta, existing_result, load_or_create_product_stock
 
 
 def item_query(household_id: str) -> Select[tuple[ShoppingListItem]]:
@@ -69,7 +67,7 @@ def create_purchase(
     *,
     household_id: str,
     product: Product,
-    quantity: Decimal,
+    quantity: int,
     unit: str,
     location_id: str | None,
     best_before: date | None,
@@ -82,16 +80,13 @@ def create_purchase(
     if replay:
         return replay
     location = resolve_location(db, household_id, product, location_id)
-    batch = StockBatch(
+    batch = load_or_create_product_stock(
+        db,
         household_id=household_id,
         product_id=product.id,
         location_id=location.id,
-        quantity=Decimal("0"),
-        unit=unit,
         best_before=best_before,
     )
-    db.add(batch)
-    db.flush()
     return apply_delta(
         db,
         household_id=household_id,
@@ -99,7 +94,7 @@ def create_purchase(
         user_id=user_id,
         movement_type=MovementType.purchase,
         delta=quantity,
-        expected_version=1,
+        expected_version=batch.version,
         idempotency_key=idempotency_key,
         note=note,
         client_info=client_info,
@@ -144,8 +139,8 @@ def sync_min_stock_items(db: Session, household_id: str) -> bool:
                 StockBatch.quantity > 0,
             )
         )
-        available = sum_converted(((batch.quantity, batch.unit) for batch in batches), rule.unit)
-        missing = (rule.minimum_quantity - available).quantize(Decimal("0.001"))
+        available = sum(batch.quantity for batch in batches)
+        missing = rule.minimum_quantity - available
         item = db.scalar(
             select(ShoppingListItem).where(
                 ShoppingListItem.household_id == household_id,
@@ -162,15 +157,15 @@ def sync_min_stock_items(db: Session, household_id: str) -> bool:
                 )
             )
             if item and item.status == "open":
-                if item.quantity != missing or item.unit != rule.unit:
+                if item.quantity != missing or item.unit != "package":
                     item.quantity = missing
-                    item.unit = rule.unit
+                    item.unit = "package"
                     item.version += 1
                     changed = True
             elif item and item.status == "removed" and other_open is None:
                 item.status = "open"
                 item.quantity = missing
-                item.unit = rule.unit
+                item.unit = "package"
                 item.version += 1
                 changed = True
             elif item is None and other_open is None:
@@ -179,7 +174,7 @@ def sync_min_stock_items(db: Session, household_id: str) -> bool:
                         household_id=household_id,
                         product_id=rule.product_id,
                         quantity=missing,
-                        unit=rule.unit,
+                        unit="package",
                         source="min_stock",
                         create_key=str(
                             uuid.uuid5(

@@ -36,18 +36,42 @@ def current_user(
 
 
 def household_context(
-    x_household_id: str = Header(alias="X-Household-ID"),
+    x_household_id: str | None = Header(default=None, alias="X-Household-ID"),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> HouseholdContext:
-    membership = db.scalar(
-        select(Membership).where(
-            Membership.household_id == x_household_id,
-            Membership.user_id == user.id,
+    household_id = (x_household_id or "").strip()
+    if household_id:
+        membership = db.scalar(
+            select(Membership).where(
+                Membership.household_id == household_id,
+                Membership.user_id == user.id,
+            )
         )
-    )
+    else:
+        membership = db.scalar(
+            select(Membership)
+            .where(Membership.user_id == user.id)
+            .order_by(Membership.household_id)
+        )
     if membership is None:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Kein Zugriff auf diesen Haushalt")
+        if household_id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                {
+                    "code": "household_not_found",
+                    "message": (
+                        "Der ausgewählte Haushalt wurde nicht gefunden oder ist nicht zugänglich."
+                    ),
+                },
+            )
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            {
+                "code": "no_household",
+                "message": "Für dieses Konto ist noch kein Haushalt eingerichtet.",
+            },
+        )
     return HouseholdContext(user, membership)
 
 

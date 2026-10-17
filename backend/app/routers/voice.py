@@ -1,4 +1,6 @@
+from collections.abc import Sequence
 from decimal import Decimal
+from math import ceil
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -9,6 +11,7 @@ from ..ai.speech import configured_speech
 from ..database import get_db
 from ..dependencies import HouseholdContext, household_context, require_writer
 from ..models import MovementType, Product, ShoppingListItem, StockBatch, VoiceExecution
+from ..schemas import MovementResult
 from ..services.shopping import claim_open_item, create_purchase
 from ..services.stock import consume_fefo
 from ..services.voice import find_shopping_item, parse_voice_command
@@ -26,9 +29,16 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 
 
 def _finish(
-    db: Session, household_id: str, key: str, message: str, result_type: str
+    db: Session,
+    household_id: str,
+    key: str,
+    message: str,
+    result_type: str,
+    movements: Sequence[MovementResult] | None = None,
 ) -> VoiceExecuteResponse:
-    response = VoiceExecuteResponse.model_validate({"message": message, "result_type": result_type})
+    response = VoiceExecuteResponse.model_validate(
+        {"message": message, "result_type": result_type, "movements": movements or []}
+    )
     db.add(
         VoiceExecution(
             household_id=household_id,
@@ -163,8 +173,8 @@ def execute_voice(
                 household_id=household_id,
                 product_id=product.id if product else None,
                 free_text=None if product else action.product_name,
-                quantity=action.quantity or Decimal("1"),
-                unit=action.unit or (product.default_unit if product else "piece"),
+                quantity=ceil(action.quantity or Decimal("1")),
+                unit="package",
                 source="voice",
                 created_by_id=context.user.id,
                 create_key=payload.idempotency_key,
@@ -208,10 +218,8 @@ def execute_voice(
                 )
             )
         )
-        totals: dict[str, Decimal] = {}
-        for batch in batches:
-            totals[batch.unit] = totals.get(batch.unit, Decimal("0")) + batch.quantity
-        summary = ", ".join(f"{quantity:g} {unit}" for unit, quantity in totals.items()) or "nichts"
+        total = sum(batch.quantity for batch in batches)
+        summary = f"{total} Packungen" if total else "nichts"
         return _finish(
             db,
             household_id,
@@ -225,12 +233,12 @@ def execute_voice(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Produkt und Menge sind erforderlich"
             )
-        create_purchase(
+        movement = create_purchase(
             db,
             household_id=household_id,
             product=product,
-            quantity=action.quantity,
-            unit=action.unit or product.default_unit,
+            quantity=ceil(action.quantity),
+            unit="package",
             location_id=payload.location_id,
             best_before=None,
             user_id=context.user.id,
@@ -242,15 +250,16 @@ def execute_voice(
             db,
             household_id,
             payload.idempotency_key,
-            f"{action.quantity:g} {action.unit or product.default_unit} {product.name} hinzugefügt",
+            f"{ceil(action.quantity)} Packungen {product.name} hinzugefügt",
             "stock",
+            [movement],
         )
 
     if action.intent in {"consume", "discard"}:
         if product is None:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Bitte Produkt auswählen")
-        unit = action.unit or product.default_unit
-        quantity = action.quantity
+        unit = "package"
+        quantity = ceil(action.quantity) if action.quantity is not None else None
         if quantity is None:
             matching_batches = db.scalars(
                 select(StockBatch).where(
@@ -260,10 +269,10 @@ def execute_voice(
                     StockBatch.quantity > 0,
                 )
             )
-            quantity = sum((batch.quantity for batch in matching_batches), Decimal("0"))
+            quantity = sum(batch.quantity for batch in matching_batches)
         if quantity is None or quantity <= 0:
             raise HTTPException(status.HTTP_409_CONFLICT, "Kein passender Bestand vorhanden")
-        consume_fefo(
+        movements = consume_fefo(
             db,
             household_id=household_id,
             product_id=product.id,
@@ -283,8 +292,9 @@ def execute_voice(
             db,
             household_id,
             payload.idempotency_key,
-            f"{quantity:g} {unit} {product.name} {verb}",
+            f"{quantity} Packungen {product.name} {verb}",
             "stock",
+            movements,
         )
 
     raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unbekannte Sprachaktion")

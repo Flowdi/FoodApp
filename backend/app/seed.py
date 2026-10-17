@@ -34,7 +34,7 @@ def seed() -> None:
             name="Milch",
             brand="Demo",
             category="Molkerei",
-            default_unit="l",
+            default_unit="package",
         )
         milk.barcodes = [ProductBarcode(barcode="4000000000016")]
         db.add_all(
@@ -50,7 +50,7 @@ def seed() -> None:
                     household_id=household.id,
                     name="Tomaten",
                     category="Gemüse",
-                    default_unit="piece",
+                    default_unit="package",
                 ),
             ]
         )

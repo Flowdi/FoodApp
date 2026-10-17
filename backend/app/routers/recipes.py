@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Sequence
+from math import ceil
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -260,8 +261,8 @@ def add_missing_to_shopping_list(
                 household_id=household_id,
                 product_id=item.product_id,
                 recipe_id=recipe.id,
-                quantity=item.missing_quantity,
-                unit=item.unit,
+                quantity=max(1, ceil(item.missing_quantity)),
+                unit="package",
                 source="recipe",
                 created_by_id=context.user.id,
             )

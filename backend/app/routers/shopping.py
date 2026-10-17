@@ -68,7 +68,7 @@ def list_items(
     items = db.scalars(
         item_query(household_id)
         .where(ShoppingListItem.status != "removed")
-        .order_by(ShoppingListItem.status, ShoppingListItem.created_at)
+        .order_by(ShoppingListItem.created_at)
     )
     return [item_read(item) for item in items]
 
@@ -94,7 +94,7 @@ def create_item(
         product_id=product.id if product else None,
         free_text=payload.free_text.strip() if payload.free_text else None,
         quantity=payload.quantity,
-        unit=payload.unit,
+        unit="package",
         note=payload.note,
         source=payload.source,
         created_by_id=context.user.id,
@@ -140,6 +140,9 @@ def check_item(
             )
         raise
     product = scoped_product(db, household_id, payload.product_id or item.product_id)
+    if product is not None and item.product_id != product.id:
+        item.product = product
+        item.free_text = None
     movement = None
     household = db.get(Household, household_id)
     should_book = bool(household and household.shopping_check_mode == "instant" and product)
@@ -184,21 +187,23 @@ def undo_check(
                 "message": "Eintrag wurde zwischenzeitlich geändert",
             },
         )
-    if not item.linked_movement_id:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            {"code": "shopping_no_movement", "message": "Eintrag besitzt keine Buchung"},
+    reversal = None
+    if item.linked_movement_id:
+        if payload.expected_batch_version is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Aktuelle Bestandsversion fehlt",
+            )
+        reversal = reverse_movement(
+            db,
+            household_id=household_id,
+            movement_id=item.linked_movement_id,
+            user_id=context.user.id,
+            expected_version=payload.expected_batch_version,
+            idempotency_key=payload.idempotency_key,
+            can_reverse_any=context.membership.role in {Role.owner, Role.admin},
+            commit=False,
         )
-    reversal = reverse_movement(
-        db,
-        household_id=household_id,
-        movement_id=item.linked_movement_id,
-        user_id=context.user.id,
-        expected_version=payload.expected_batch_version,
-        idempotency_key=payload.idempotency_key,
-        can_reverse_any=context.membership.role in {Role.owner, Role.admin},
-        commit=False,
-    )
     item.status = "open"
     item.checked_by_id = None
     item.checked_at = None
@@ -313,7 +318,7 @@ def export_text(
         .order_by(ShoppingListItem.created_at)
     )
     lines = [
-        f"- {item.quantity:g} {item.unit} {item.product.name if item.product else item.free_text}"
+        f"- {item.quantity}× {item.product.name if item.product else item.free_text}"
         for item in items
     ]
     return Response("Einkaufsliste\n" + "\n".join(lines), media_type="text/plain; charset=utf-8")

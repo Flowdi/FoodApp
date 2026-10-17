@@ -1,13 +1,72 @@
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import MovementType, StockBatch, StockMovement
+from ..models import MovementType, StockBatch, StockMovement, uuid_str
 from ..schemas import MovementResult
+
+
+def load_or_create_product_stock(
+    db: Session,
+    *,
+    household_id: str,
+    product_id: str,
+    location_id: str,
+    best_before: date | None,
+) -> StockBatch:
+    values = {
+        "id": uuid_str(),
+        "household_id": household_id,
+        "product_id": product_id,
+        "location_id": location_id,
+        "quantity": 0,
+        "unit": "package",
+        "best_before": best_before,
+        "version": 1,
+    }
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        pg_statement = postgresql_insert(StockBatch).values(**values)
+        pg_statement = pg_statement.on_conflict_do_nothing(
+            index_elements=["household_id", "product_id"]
+        )
+        db.execute(pg_statement)
+    elif dialect == "sqlite":
+        sqlite_statement = sqlite_insert(StockBatch).values(**values)
+        sqlite_statement = sqlite_statement.on_conflict_do_nothing(
+            index_elements=["household_id", "product_id"]
+        )
+        db.execute(sqlite_statement)
+    else:
+        existing = db.scalar(
+            select(StockBatch).where(
+                StockBatch.household_id == household_id,
+                StockBatch.product_id == product_id,
+            )
+        )
+        if existing is None:
+            db.add(StockBatch(**values))
+            db.flush()
+    batch = db.scalar(
+        select(StockBatch)
+        .where(
+            StockBatch.household_id == household_id,
+            StockBatch.product_id == product_id,
+        )
+        .with_for_update()
+    )
+    assert batch is not None
+    batch.location_id = location_id
+    if best_before and (batch.best_before is None or best_before < batch.best_before):
+        batch.best_before = best_before
+    return batch
 
 
 def existing_result(db: Session, household_id: str, key: str) -> MovementResult | None:
@@ -19,7 +78,12 @@ def existing_result(db: Session, household_id: str, key: str) -> MovementResult 
     )
     if movement is None:
         return None
-    batch = db.scalar(select(StockBatch).where(StockBatch.id == movement.batch_id))
+    batch = db.scalar(
+        select(StockBatch).where(
+            StockBatch.id == movement.batch_id,
+            StockBatch.household_id == household_id,
+        )
+    )
     assert batch is not None
     return MovementResult(movement=movement, batch=batch, replayed=True)
 
@@ -63,7 +127,7 @@ def consume_fefo(
     *,
     household_id: str,
     product_id: str,
-    quantity: Decimal,
+    quantity: int,
     unit: str,
     expected_versions: dict[str, int],
     idempotency_key: str,
@@ -99,7 +163,6 @@ def consume_fefo(
             .where(
                 StockBatch.household_id == household_id,
                 StockBatch.product_id == product_id,
-                StockBatch.unit == unit,
                 StockBatch.quantity > 0,
             )
             .order_by(StockBatch.best_before.asc().nullslast(), StockBatch.id)
@@ -109,7 +172,7 @@ def consume_fefo(
     replay = existing_operation(db, household_id, idempotency_key)
     if replay:
         return replay
-    available = sum((batch.quantity for batch in batches), Decimal("0"))
+    available = sum(batch.quantity for batch in batches)
     if available < quantity:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -182,7 +245,7 @@ def apply_delta(
     batch_id: str,
     user_id: str,
     movement_type: MovementType,
-    delta: Decimal,
+    delta: int | Decimal,
     expected_version: int,
     idempotency_key: str,
     note: str | None = None,
@@ -336,26 +399,16 @@ def transfer_stock(
     household_id: str,
     batch_id: str,
     target_location_id: str,
-    quantity: Decimal,
+    quantity: int,
     expected_version: int,
     idempotency_key: str,
     user_id: str,
     note: str | None,
     client_info: str | None,
 ) -> list[MovementResult]:
-    try:
-        namespace = uuid.UUID(idempotency_key)
-    except ValueError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "Ungültiger Idempotency-Key"
-        ) from exc
-    source_key = str(uuid.uuid5(namespace, "source"))
-    target_key = str(uuid.uuid5(namespace, "target"))
-    replay = existing_result(db, household_id, source_key)
+    replay = existing_result(db, household_id, idempotency_key)
     if replay:
-        target_replay = existing_result(db, household_id, target_key)
-        assert target_replay is not None
-        return [replay, target_replay]
+        return [replay]
     source = db.scalar(
         select(StockBatch)
         .where(StockBatch.id == batch_id, StockBatch.household_id == household_id)
@@ -381,12 +434,12 @@ def transfer_stock(
                 },
             },
         )
-    if source.quantity < quantity:
+    if source.quantity != quantity:
         raise HTTPException(
-            status.HTTP_409_CONFLICT,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
             {
-                "code": "insufficient_stock",
-                "message": "Nicht genügend Bestand",
+                "code": "complete_transfer_required",
+                "message": "Eine Bestandsposition kann nur vollständig umgelagert werden",
                 "current": {
                     "id": source.id,
                     "quantity": str(source.quantity),
@@ -394,59 +447,20 @@ def transfer_stock(
                 },
             },
         )
-    target = db.scalar(
-        select(StockBatch)
-        .where(
-            StockBatch.household_id == household_id,
-            StockBatch.product_id == source.product_id,
-            StockBatch.location_id == target_location_id,
-            StockBatch.unit == source.unit,
-            StockBatch.best_before == source.best_before,
-            StockBatch.opened_at == source.opened_at,
-        )
-        .with_for_update()
-    )
-    if target is None:
-        target = StockBatch(
-            household_id=household_id,
-            product_id=source.product_id,
-            location_id=target_location_id,
-            quantity=Decimal("0"),
-            unit=source.unit,
-            best_before=source.best_before,
-            opened_at=source.opened_at,
-        )
-        db.add(target)
-        db.flush()
-    source.quantity -= quantity
+    source.location_id = target_location_id
     source.version += 1
-    target.quantity += quantity
-    target.version += 1
-    source_movement = StockMovement(
+    movement = StockMovement(
         household_id=household_id,
         batch_id=source.id,
         user_id=user_id,
         movement_type=MovementType.transfer,
-        quantity_delta=-quantity,
-        idempotency_key=source_key,
+        quantity_delta=0,
+        idempotency_key=idempotency_key,
         note=note,
         client_info=client_info,
     )
-    target_movement = StockMovement(
-        household_id=household_id,
-        batch_id=target.id,
-        user_id=user_id,
-        movement_type=MovementType.transfer,
-        quantity_delta=quantity,
-        idempotency_key=target_key,
-        note=note,
-        client_info=client_info,
-    )
-    db.add_all([source_movement, target_movement])
+    db.add(movement)
     db.commit()
-    for item in (source, target, source_movement, target_movement):
+    for item in (source, movement):
         db.refresh(item)
-    return [
-        MovementResult(movement=source_movement, batch=source),
-        MovementResult(movement=target_movement, batch=target),
-    ]
+    return [MovementResult(movement=movement, batch=source)]

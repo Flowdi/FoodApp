@@ -6,6 +6,7 @@ from sqlalchemy import select
 from .database import SessionLocal
 from .models import Household
 from .services.notifications import evaluate_household
+from .services.receipts import delete_expired_receipt_images
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,14 @@ def create_scheduler() -> BackgroundScheduler:
         hour=4,
         minute=0,
         id="daily-inventory-checks",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        delete_expired_receipt_images,
+        "cron",
+        hour=4,
+        minute=30,
+        id="receipt-image-retention",
         replace_existing=True,
     )
     return scheduler

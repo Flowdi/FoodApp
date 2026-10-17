@@ -8,6 +8,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, mod
 from .models import MovementType, Role
 
 Quantity = Annotated[Decimal, Field(gt=0, decimal_places=3)]
+PackageQuantity = Annotated[int, Field(gt=0)]
 RecipeTag = Annotated[str, Field(min_length=1, max_length=50)]
 
 
@@ -134,7 +135,7 @@ class ProductCreate(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     brand: str | None = None
     category: str | None = None
-    default_unit: str = "piece"
+    default_unit: str = "package"
     default_location_id: str | None = None
     image_url: str | None = None
     package_quantity: str | None = Field(default=None, max_length=80)
@@ -176,7 +177,7 @@ class BatchRead(ORMModel):
     id: str
     product_id: str
     location_id: str
-    quantity: Decimal
+    quantity: int
     unit: str
     best_before: date | None
     opened_at: date | None
@@ -187,15 +188,15 @@ class BatchRead(ORMModel):
 class PurchaseRequest(BaseModel):
     product_id: str
     location_id: str
-    quantity: Quantity
-    unit: str
+    quantity: PackageQuantity = 1
+    unit: str = "package"
     best_before: date | None = None
     idempotency_key: IdempotencyKey
     client_info: str | None = None
 
 
 class ChangeStockRequest(BaseModel):
-    quantity: Quantity
+    quantity: PackageQuantity
     expected_version: int = Field(ge=1)
     idempotency_key: IdempotencyKey
     note: str | None = None
@@ -204,8 +205,8 @@ class ChangeStockRequest(BaseModel):
 
 class FefoConsumeRequest(BaseModel):
     product_id: str
-    quantity: Quantity
-    unit: str
+    quantity: PackageQuantity
+    unit: str = "package"
     expected_versions: dict[str, int]
     idempotency_key: IdempotencyKey
     note: str | None = None
@@ -223,7 +224,7 @@ class BatchUpdate(BaseModel):
 class TransferRequest(BaseModel):
     batch_id: str
     target_location_id: str
-    quantity: Quantity
+    quantity: PackageQuantity
     expected_version: int = Field(ge=1)
     idempotency_key: IdempotencyKey
     note: str | None = None
@@ -231,15 +232,15 @@ class TransferRequest(BaseModel):
 
 
 class MinStockRuleWrite(BaseModel):
-    minimum_quantity: Quantity
-    unit: str
+    minimum_quantity: PackageQuantity
+    unit: str = "package"
     active: bool = True
 
 
 class MinStockRuleRead(ORMModel):
     id: str
     product_id: str
-    minimum_quantity: Decimal
+    minimum_quantity: int
     unit: str
     active: bool
 
@@ -247,8 +248,8 @@ class MinStockRuleRead(ORMModel):
 class ShoppingItemCreate(BaseModel):
     product_id: str | None = None
     free_text: str | None = Field(default=None, min_length=1, max_length=240)
-    quantity: Quantity
-    unit: str = Field(min_length=1, max_length=20)
+    quantity: PackageQuantity
+    unit: str = "package"
     note: str | None = None
     source: str = Field(default="manual", pattern="^(manual|voice|receipt|recipe)$")
     idempotency_key: IdempotencyKey
@@ -266,7 +267,7 @@ class ShoppingItemRead(ORMModel):
     product_name: str
     category: str | None
     free_text: str | None
-    quantity: Decimal
+    quantity: int
     unit: str
     note: str | None
     source: str
@@ -290,7 +291,7 @@ class ShoppingCheckRequest(BaseModel):
 
 class ShoppingUndoRequest(BaseModel):
     expected_version: int = Field(ge=1)
-    expected_batch_version: int = Field(ge=1)
+    expected_batch_version: int | None = Field(default=None, ge=1)
     idempotency_key: IdempotencyKey
 
 
@@ -382,14 +383,14 @@ class InventorySessionRead(ORMModel):
 
 class InventoryCountWrite(BaseModel):
     batch_id: str
-    counted_quantity: Decimal = Field(ge=0, decimal_places=3)
+    counted_quantity: int = Field(ge=0)
 
 
 class InventoryCountRead(ORMModel):
     batch_id: str
-    expected_quantity: Decimal
+    expected_quantity: int
     expected_version: int
-    counted_quantity: Decimal
+    counted_quantity: int
 
 
 class InventoryConfirmRequest(BaseModel):

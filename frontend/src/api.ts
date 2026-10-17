@@ -21,7 +21,11 @@ export type QueuedResult = { queued: true; key: string }
 export type VoiceIntent = 'add_to_stock' | 'consume' | 'discard' | 'add_to_shopping' | 'remove_from_shopping' | 'check_shopping' | 'query_stock' | 'unknown'
 export type VoiceAction = { intent: VoiceIntent; product_id?: string; product_name: string; quantity?: string; unit?: string; confidence: number; choices: { id: string; name: string }[]; expected_versions: Record<string, number>; requires_confirmation: boolean }
 export type VoiceInterpretation = { transcript: string; actions: VoiceAction[]; parser: 'rules' | 'llm' }
+export type VoiceExecution = { message: string; result_type: 'stock' | 'shopping' | 'query'; movements: MovementResult[] }
 export type VoicePreferences = { auto_confirm_shopping: boolean; speech_output: boolean; start_listening_on_launch: boolean | null }
+export type ReceiptLine = { id: string; raw_text: string; quantity: string; unit: string; unit_price?: string; total_price?: string; line_kind: string; status: string; confidence: string; product_id?: string; product_name?: string; location_id?: string; best_before?: string; movement_id?: string; coordinates?: Record<string, unknown>; version: number }
+export type Receipt = { id: string; merchant?: string; purchased_at?: string; total?: string; status: 'processing' | 'review' | 'failed' | 'confirmed' | 'reversed'; progress: number; processing_error?: string; analysis_provider?: string; duplicate_of_id?: string; duplicate_message?: string; sum_difference?: string; image_count: number; uploaded_by_name: string; created_at: string; confirmed_at?: string; reversed_at?: string; lines: ReceiptLine[] }
+export type ReceiptConfig = { ocr_mode: string; images_sent_to_cloud: boolean; cloud_processing: 'images' | 'text' | 'none'; image_retention_days: number }
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message) }
@@ -29,6 +33,33 @@ export class ApiError extends Error {
 
 const state = { token: localStorage.getItem('access_token') || '', refresh: localStorage.getItem('refresh_token') || '', household: localStorage.getItem('household_id') || '' }
 let refreshPromise: Promise<boolean> | null = null
+
+function errorMessage(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const missingHousehold = detail.some(item => Array.isArray(item?.loc) && item.loc.includes('x-household-id'))
+    if (missingHousehold) return 'Der Haushalt konnte nicht geladen werden. Bitte lade die Seite neu oder melde dich erneut an.'
+    return 'Die Anfrage ist unvollständig. Bitte prüfe deine Eingaben und versuche es erneut.'
+  }
+  if (detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string') return detail.message
+  return 'Aktion fehlgeschlagen'
+}
+
+async function ensureHousehold(): Promise<string> {
+  state.household = state.household.trim()
+  if (state.household) return state.household
+  const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
+  const memberships = boot.memberships || []
+  const selected = memberships.find(item => item.household_id === state.household) || memberships[0]
+  if (!selected) {
+    state.household = ''
+    localStorage.removeItem('household_id')
+    throw new ApiError('Für dieses Konto ist noch kein Haushalt eingerichtet.', 404)
+  }
+  state.household = selected.household_id
+  localStorage.setItem('household_id', state.household)
+  return state.household
+}
 
 async function renewAccessToken(): Promise<boolean> {
   if (!state.refresh) return false
@@ -48,13 +79,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 401 && path !== '/auth/refresh' && await renewAccessToken()) return request<T>(path, init)
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: 'Netzwerkfehler' }))
-    const detail = body.detail
-    const message = typeof detail === 'string'
-      ? detail
-      : Array.isArray(detail)
-        ? detail.map(item => item.msg).join('; ')
-        : detail?.message
-    throw new ApiError(message || 'Aktion fehlgeschlagen', response.status)
+    throw new ApiError(errorMessage(body.detail), response.status)
   }
   if (response.status === 204) return undefined as T
   return response.json()
@@ -69,10 +94,16 @@ async function upload<T>(path: string, body: FormData): Promise<T> {
   if (response.status === 401 && await renewAccessToken()) return upload<T>(path, body)
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: 'Netzwerkfehler' }))
-    const detail = payload.detail
-    throw new ApiError(typeof detail === 'string' ? detail : detail?.message || 'Aktion fehlgeschlagen', response.status)
+    throw new ApiError(errorMessage(payload.detail), response.status)
   }
   return response.json()
+}
+
+async function blobRequest(path: string): Promise<Blob> {
+  const response = await fetch(`/api/v1${path}`, { headers: { ...(state.token && { Authorization: `Bearer ${state.token}` }), ...(state.household && { 'X-Household-ID': state.household }) } })
+  if (response.status === 401 && await renewAccessToken()) return blobRequest(path)
+  if (!response.ok) throw new ApiError('Bonbild konnte nicht geladen werden', response.status)
+  return response.blob()
 }
 
 async function offlineRequest<T>(path: string, body: Record<string, unknown>): Promise<T | QueuedResult> {
@@ -119,17 +150,18 @@ async function streamEvents(onChange: () => void, signal: AbortSignal) {
 
 export const api = {
   authenticated: () => Boolean(state.token || state.refresh),
+  ensureHousehold,
   async login(email: string, password: string) {
     const tokens = await request<{ access_token: string; refresh_token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     state.token = tokens.access_token; state.refresh = tokens.refresh_token; localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh)
-    const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
-    state.household = boot.memberships[0].household_id; localStorage.setItem('household_id', state.household)
+    state.household = ''; localStorage.removeItem('household_id')
+    await ensureHousehold()
   },
   async register(email: string, display_name: string, password: string, household_name: string | null, invitation_token: string | null) {
     const tokens = await request<{ access_token: string; refresh_token: string }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, display_name, password, household_name, invitation_token }) })
     state.token = tokens.access_token; state.refresh = tokens.refresh_token; localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh)
-    const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
-    state.household = boot.memberships[0].household_id; localStorage.setItem('household_id', state.household)
+    state.household = ''; localStorage.removeItem('household_id')
+    await ensureHousehold()
   },
   async logout() { if (state.refresh) await request('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: state.refresh }) }).catch(() => undefined); localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); localStorage.removeItem('household_id'); state.token = ''; state.refresh = ''; state.household = '' },
   requestPasswordReset: (email: string) => request<{ message: string }>('/auth/password-reset/request', { method: 'POST', body: JSON.stringify({ email }) }),
@@ -158,16 +190,25 @@ export const api = {
   ,shoppingList: () => request<ShoppingItem[]>('/shopping-list')
   ,createShoppingItem: (body: object) => request<ShoppingItem>('/shopping-list', { method: 'POST', body: JSON.stringify(body) })
   ,checkShoppingItem: (item: ShoppingItem, book_to_stock: boolean, product_id?: string) => request<ShoppingCheckResult>(`/shopping-list/${item.id}/check`, { method: 'POST', body: JSON.stringify({ expected_version: item.version, idempotency_key: crypto.randomUUID(), product_id, book_to_stock, client_info: navigator.userAgent }) })
-  ,undoShoppingItem: (itemId: string, itemVersion: number, batchVersion: number) => request<ShoppingCheckResult>(`/shopping-list/${itemId}/undo`, { method: 'POST', body: JSON.stringify({ expected_version: itemVersion, expected_batch_version: batchVersion, idempotency_key: crypto.randomUUID() }) })
+  ,undoShoppingItem: (itemId: string, itemVersion: number, batchVersion?: number) => request<ShoppingCheckResult>(`/shopping-list/${itemId}/undo`, { method: 'POST', body: JSON.stringify({ expected_version: itemVersion, expected_batch_version: batchVersion, idempotency_key: crypto.randomUUID() }) })
   ,finishShoppingTrip: (lines: { item: ShoppingItem; location_id?: string; best_before?: string }[]) => request<ShoppingCheckResult[]>('/shopping-list/finish', { method: 'POST', body: JSON.stringify({ lines: lines.map(({ item, location_id, best_before }) => ({ item_id: item.id, expected_version: item.version, location_id: location_id || null, best_before: best_before || null, idempotency_key: crypto.randomUUID() })) }) })
   ,removeShoppingItem: (item: ShoppingItem) => request<ShoppingItem>(`/shopping-list/${item.id}/remove`, { method: 'POST', body: JSON.stringify({ expected_version: item.version }) })
   ,clearCheckedShopping: () => request<void>('/shopping-list/clear-checked', { method: 'POST' })
   ,shoppingText: () => fetch('/api/v1/shopping-list/export.txt', { headers: { Authorization: `Bearer ${state.token}`, 'X-Household-ID': state.household } }).then(response => response.text())
   ,interpretVoice: (text: string) => request<VoiceInterpretation>('/voice/interpret', { method: 'POST', body: JSON.stringify({ text }) })
-  ,executeVoice: (action: VoiceAction, location_id?: string, idempotency_key = crypto.randomUUID()) => request<{ message: string; result_type: string }>('/voice/execute', { method: 'POST', body: JSON.stringify({ action, location_id: location_id || null, idempotency_key }) })
+  ,executeVoice: (action: VoiceAction, location_id?: string, idempotency_key = crypto.randomUUID()) => request<VoiceExecution>('/voice/execute', { method: 'POST', body: JSON.stringify({ action, location_id: location_id || null, idempotency_key }) })
   ,transcribeVoice: (audio: Blob) => { const form = new FormData(); form.append('audio', audio, 'voice.webm'); return upload<{ text: string }>('/voice/transcribe', form) }
   ,voicePreferences: () => request<VoicePreferences>('/voice/preferences')
   ,setVoicePreferences: (body: VoicePreferences) => request<VoicePreferences>('/voice/preferences', { method: 'PUT', body: JSON.stringify(body) })
+  ,receipts: () => request<Receipt[]>('/receipts')
+  ,receiptConfig: () => request<ReceiptConfig>('/receipts/config')
+  ,receipt: (receiptId: string) => request<Receipt>(`/receipts/${receiptId}`)
+  ,uploadReceipt: (files: File[]) => { const form = new FormData(); files.forEach(file => form.append('files', file)); return upload<Receipt>('/receipts', form) }
+  ,receiptImage: (receiptId: string, index = 0) => blobRequest(`/receipts/${receiptId}/images/${index}`)
+  ,retryReceipt: (receiptId: string) => request<Receipt>(`/receipts/${receiptId}/process`, { method: 'POST' })
+  ,updateReceiptLine: (receiptId: string, lineId: string, body: object) => request<Receipt>(`/receipts/${receiptId}/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(body) })
+  ,confirmReceipt: (receiptId: string, body: object) => request<Receipt>(`/receipts/${receiptId}/confirm`, { method: 'POST', body: JSON.stringify(body) })
+  ,reverseReceipt: (receiptId: string) => request<Receipt>(`/receipts/${receiptId}/reverse`, { method: 'POST', body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) })
   ,recipes: () => request<Recipe[]>('/recipes')
   ,recipeRecommendations: (tags: string[] = [], servings?: number) => { const params = new URLSearchParams(); tags.forEach(tag => params.append('tags', tag)); if (servings) params.set('servings', String(servings)); const query = params.toString(); return request<RecipeRecommendation[]>(`/recipes/recommendations${query ? `?${query}` : ''}`) }
   ,recipePreferences: () => request<RecipePreferences>('/recipes/preferences')

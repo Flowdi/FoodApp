@@ -1,11 +1,11 @@
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     environment: str = "development"
     database_url: str = "sqlite:///./vorrat.db"
@@ -42,9 +42,15 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 15
     llm_daily_limit_per_household: int = 50
     stt_provider: str = "faster-whisper"
-    stt_model: str = "small"
+    stt_model: str = Field(
+        default="small", validation_alias=AliasChoices("STT_MODEL_SIZE", "STT_MODEL")
+    )
     stt_api_key: str = ""
     stt_base_url: str = ""
+    receipt_ocr_mode: str = "vision_llm"
+    receipt_image_retention_days: int = 30
+    receipt_shopping_dedup_hours: int = 12
+    receipt_storage_path: str = "data/receipts"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

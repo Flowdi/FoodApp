@@ -23,6 +23,9 @@ dependencies = [
   "pywebpush>=2.0,<3",
   "python-multipart>=0.0.17,<1",
   "faster-whisper>=1.1,<2",
+  "Pillow>=11,<13",
+  "pillow-heif>=1,<2",
+  "pypdf>=5,<7",
 ]
 
 [project.optional-dependencies]

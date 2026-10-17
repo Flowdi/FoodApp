@@ -14,6 +14,7 @@ from .routers import (
     inventory,
     inventory_sessions,
     notifications,
+    receipts,
     recipes,
     shopping,
     voice,
@@ -50,6 +51,7 @@ app.include_router(events.router, prefix="/api/v1")
 app.include_router(recipes.router, prefix="/api/v1")
 app.include_router(shopping.router, prefix="/api/v1")
 app.include_router(voice.router, prefix="/api/v1")
+app.include_router(receipts.router, prefix="/api/v1")
 
 
 @app.get("/healthz", include_in_schema=False)

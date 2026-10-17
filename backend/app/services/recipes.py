@@ -79,7 +79,9 @@ def recommend_recipes(
             available = Decimal("0")
             for batch in by_product[ingredient.product_id]:
                 try:
-                    converted = convert_quantity(batch.quantity, batch.unit, ingredient.unit)
+                    converted = convert_quantity(
+                        Decimal(batch.quantity), batch.unit, ingredient.unit
+                    )
                 except ValueError:
                     continue
                 available += converted

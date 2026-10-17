@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .schemas import MovementResult
+
 VoiceIntent = Literal[
     "add_to_stock",
     "consume",
@@ -55,6 +57,7 @@ class VoiceExecuteRequest(BaseModel):
 class VoiceExecuteResponse(BaseModel):
     message: str
     result_type: Literal["stock", "shopping", "query"]
+    movements: list[MovementResult] = Field(default_factory=list)
 
 
 class VoiceTranscription(BaseModel):
