@@ -64,3 +64,4 @@ class VoiceTranscription(BaseModel):
 class VoicePreferences(BaseModel):
     auto_confirm_shopping: bool = False
     speech_output: bool = False
+    start_listening_on_launch: bool | None = None

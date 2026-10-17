@@ -77,7 +77,12 @@ class Membership(Base):
         JSON, default=lambda: {"preferred_tags": [], "excluded_tags": []}
     )
     voice_preferences: Mapped[dict[str, object]] = mapped_column(
-        JSON, default=lambda: {"auto_confirm_shopping": False, "speech_output": False}
+        JSON,
+        default=lambda: {
+            "auto_confirm_shopping": False,
+            "speech_output": False,
+            "start_listening_on_launch": None,
+        },
     )
 
 

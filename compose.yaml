@@ -21,7 +21,10 @@ services:
     depends_on:
       db: { condition: service_healthy }
   frontend:
-    build: frontend
+    build:
+      context: frontend
+      args:
+        APP_NAME: ${APP_NAME:-Vorrat}
     restart: unless-stopped
   caddy:
     image: caddy:2.9-alpine

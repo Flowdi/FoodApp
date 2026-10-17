@@ -24,6 +24,7 @@ Vorrat ist eine deutschsprachige, i18n-fähige Multi-Device-PWA. Code, Bezeichne
 - `backend/alembic/`: Schema-Migrationen
 - `backend/tests/`: Unit- und API-Tests
 - `frontend/src/`: Vue-3-PWA
+- `frontend/tests/lighthouse-pwa.mjs`: installierbares Manifest und PWA-Audits
 - `scripts/`: Betriebs- und Backup-Helfer
 
 ## Befehle
@@ -36,6 +37,7 @@ ruff check backend
 ruff format --check backend
 mypy backend/app
 cd frontend && npm install && npm run build
+cd frontend && npm run test:pwa
 cd frontend && npm run test:e2e
 ```
 
@@ -47,6 +49,7 @@ cd frontend && npm run test:e2e
 4. Touch-Ziele sind mindestens 44 px groß; Kernpfade funktionieren bei 320 px Breite und im Dark Mode.
 5. Keine Secrets, Tokens, Produktionsdaten oder Dumps committen.
 6. README und `.env.example` bei Betriebsänderungen mitziehen.
+7. PWA-Startpfade (`/voice` und Manifest-Shortcuts) müssen auch nach Login/Refresh erhalten bleiben; Mikrofonspuren nach jeder Aufnahme freigeben.
 
 ## Definition of Done
 
