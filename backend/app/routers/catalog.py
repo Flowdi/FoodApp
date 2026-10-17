@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -11,7 +9,6 @@ from ..models import (
     MinStockRule,
     Product,
     ProductBarcode,
-    ShoppingListEntry,
     StockBatch,
     StorageLocation,
 )
@@ -22,9 +19,7 @@ from ..schemas import (
     MinStockRuleWrite,
     ProductRead,
     ProductUpdate,
-    ShoppingListItem,
 )
-from ..units import sum_converted
 
 router = APIRouter(tags=["catalog"])
 
@@ -61,6 +56,15 @@ def update_product(
     product = load_product(db, context.membership.household_id, product_id)
     changes: dict[str, object] = {}
     values = payload.model_dump(exclude_unset=True, exclude={"barcodes"})
+    if values.get("default_location_id"):
+        location = db.scalar(
+            select(StorageLocation).where(
+                StorageLocation.id == values["default_location_id"],
+                StorageLocation.household_id == context.membership.household_id,
+            )
+        )
+        if location is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Lagerort nicht gefunden")
     for field, value in values.items():
         old_value = getattr(product, field)
         if old_value != value:
@@ -188,62 +192,3 @@ def min_stock_rules(
             .order_by(MinStockRule.product_id)
         )
     )
-
-
-@router.get("/shopping-list", response_model=list[ShoppingListItem])
-def shopping_list(
-    context: HouseholdContext = Depends(household_context),
-    db: Session = Depends(get_db),
-) -> list[ShoppingListItem]:
-    rows = db.execute(
-        select(MinStockRule, Product.name)
-        .join(Product, Product.id == MinStockRule.product_id)
-        .where(
-            MinStockRule.household_id == context.membership.household_id,
-            MinStockRule.active.is_(True),
-        )
-        .order_by(Product.name)
-    )
-    result: list[ShoppingListItem] = []
-    for rule, name in rows:
-        batches = db.scalars(
-            select(StockBatch).where(
-                StockBatch.household_id == context.membership.household_id,
-                StockBatch.product_id == rule.product_id,
-                StockBatch.quantity > 0,
-            )
-        )
-        current_quantity = sum_converted(
-            ((batch.quantity, batch.unit) for batch in batches), rule.unit
-        )
-        if current_quantity < rule.minimum_quantity:
-            result.append(
-                ShoppingListItem(
-                    product_id=rule.product_id,
-                    product_name=name,
-                    current_quantity=current_quantity,
-                    minimum_quantity=rule.minimum_quantity,
-                    missing_quantity=rule.minimum_quantity - current_quantity,
-                    unit=rule.unit,
-                )
-            )
-    recipe_rows = db.execute(
-        select(ShoppingListEntry, Product.name)
-        .join(Product, Product.id == ShoppingListEntry.product_id)
-        .where(ShoppingListEntry.household_id == context.membership.household_id)
-        .order_by(Product.name)
-    )
-    for entry, name in recipe_rows:
-        result.append(
-            ShoppingListItem(
-                product_id=entry.product_id,
-                product_name=name,
-                current_quantity=Decimal("0"),
-                minimum_quantity=entry.quantity,
-                missing_quantity=entry.quantity,
-                unit=entry.unit,
-                source="recipe",
-                recipe_id=entry.recipe_id,
-            )
-        )
-    return result

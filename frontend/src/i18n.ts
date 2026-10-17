@@ -15,8 +15,11 @@ export const messages = {
     expiringSoon: 'Läuft bald ab',
     lowStock: 'Unter Mindestbestand',
     offlinePending: 'Offline vorgemerkt',
-    conflicts: 'Synchronisationskonflikte'
-    ,recipes: 'Rezepte',
+    conflicts: 'Synchronisationskonflikte',
+    recipes: 'Rezepte',
+    shopping: 'Einkaufsliste',
+    voice: 'Sprechen',
+    receipt: 'Bon',
     history: 'Verlauf',
     inventory: 'Inventur',
     settings: 'Einstellungen',

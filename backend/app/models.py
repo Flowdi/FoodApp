@@ -57,6 +57,7 @@ class Household(Base):
     name: Mapped[str] = mapped_column(String(120))
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Berlin")
     expiry_warning_days: Mapped[int] = mapped_column(default=3)
+    shopping_check_mode: Mapped[str] = mapped_column(String(20), default="instant")
     notification_settings: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
@@ -96,6 +97,9 @@ class Product(Base):
     brand: Mapped[str | None] = mapped_column(String(180))
     category: Mapped[str | None] = mapped_column(String(120), index=True)
     default_unit: Mapped[str] = mapped_column(String(20), default="piece")
+    default_location_id: Mapped[str | None] = mapped_column(
+        ForeignKey("storage_locations.id", ondelete="SET NULL")
+    )
     image_url: Mapped[str | None] = mapped_column(String(1000))
     package_quantity: Mapped[str | None] = mapped_column(String(80))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -316,3 +320,35 @@ class ShoppingListEntry(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
     unit: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ShoppingListItem(Base):
+    __tablename__ = "shopping_list_items"
+    __table_args__ = (UniqueConstraint("household_id", "create_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    household_id: Mapped[str] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    product_id: Mapped[str | None] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), index=True
+    )
+    free_text: Mapped[str | None] = mapped_column(String(240))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    unit: Mapped[str] = mapped_column(String(20))
+    note: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    checked_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    linked_movement_id: Mapped[str | None] = mapped_column(
+        ForeignKey("stock_movements.id", ondelete="SET NULL")
+    )
+    recipe_id: Mapped[str | None] = mapped_column(
+        ForeignKey("recipes.id", ondelete="CASCADE"), index=True
+    )
+    create_key: Mapped[str | None] = mapped_column(String(36))
+    version: Mapped[int] = mapped_column(default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    product: Mapped[Product | None] = relationship()
+    checked_by: Mapped[User | None] = relationship(foreign_keys=[checked_by_id])

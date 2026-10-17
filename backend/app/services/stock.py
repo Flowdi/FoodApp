@@ -188,6 +188,7 @@ def apply_delta(
     note: str | None = None,
     client_info: str | None = None,
     reverses_movement_id: str | None = None,
+    commit: bool = True,
 ) -> MovementResult:
     replay = existing_result(db, household_id, idempotency_key)
     if replay:
@@ -255,6 +256,10 @@ def apply_delta(
         reverses_movement_id=reverses_movement_id,
     )
     db.add(movement)
+    if not commit:
+        db.flush()
+        db.refresh(batch)
+        return MovementResult(movement=movement, batch=batch)
     try:
         db.commit()
     except IntegrityError:
@@ -277,6 +282,7 @@ def reverse_movement(
     expected_version: int,
     idempotency_key: str,
     can_reverse_any: bool,
+    commit: bool = True,
 ) -> MovementResult:
     replay = existing_result(db, household_id, idempotency_key)
     if replay:
@@ -320,6 +326,7 @@ def reverse_movement(
         idempotency_key=idempotency_key,
         note=f"Storno von {original.id}",
         reverses_movement_id=original.id,
+        commit=commit,
     )
 
 

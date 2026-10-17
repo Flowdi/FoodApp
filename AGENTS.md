@@ -19,6 +19,7 @@ Vorrat ist eine deutschsprachige, i18n-fähige Multi-Device-PWA. Code, Bezeichne
 
 - `backend/app/models.py`: persistentes Domänenmodell
 - `backend/app/services/`: transaktionale Geschäftslogik
+- `backend/app/services/shopping.py`: persistente Einkaufsliste und atomare Einbuchung
 - `backend/app/routers/`: dünne HTTP-Schicht
 - `backend/alembic/`: Schema-Migrationen
 - `backend/tests/`: Unit- und API-Tests
@@ -35,6 +36,7 @@ ruff check backend
 ruff format --check backend
 mypy backend/app
 cd frontend && npm install && npm run build
+cd frontend && npm run test:e2e
 ```
 
 ## Änderungscheckliste

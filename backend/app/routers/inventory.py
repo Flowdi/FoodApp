@@ -84,6 +84,15 @@ def create_product(
     context: HouseholdContext = Depends(require_writer),
     db: Session = Depends(get_db),
 ) -> Product:
+    if payload.default_location_id:
+        location = db.scalar(
+            select(StorageLocation).where(
+                StorageLocation.id == payload.default_location_id,
+                StorageLocation.household_id == context.membership.household_id,
+            )
+        )
+        if location is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Lagerort nicht gefunden")
     product = Product(
         household_id=context.membership.household_id, **payload.model_dump(exclude={"barcodes"})
     )

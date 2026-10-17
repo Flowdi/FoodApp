@@ -8,12 +8,12 @@ from sqlalchemy import func, select
 
 from ..database import SessionLocal
 from ..dependencies import HouseholdContext, household_context
-from ..models import AuditLog, Notification, StockMovement
+from ..models import AuditLog, Notification, ShoppingListItem, StockMovement
 
 router = APIRouter(tags=["events"])
 
 
-def household_revision(household_id: str) -> tuple[int, int, int]:
+def household_revision(household_id: str) -> tuple[int, int, int, int]:
     with SessionLocal() as db:
         movement_count = db.scalar(
             select(func.count(StockMovement.id)).where(StockMovement.household_id == household_id)
@@ -24,7 +24,17 @@ def household_revision(household_id: str) -> tuple[int, int, int]:
         notification_count = db.scalar(
             select(func.count(Notification.id)).where(Notification.household_id == household_id)
         )
-    return int(movement_count or 0), int(audit_count or 0), int(notification_count or 0)
+        shopping_revision = db.scalar(
+            select(func.coalesce(func.sum(ShoppingListItem.version), 0)).where(
+                ShoppingListItem.household_id == household_id
+            )
+        )
+    return (
+        int(movement_count or 0),
+        int(audit_count or 0),
+        int(notification_count or 0),
+        int(shopping_revision or 0),
+    )
 
 
 async def event_stream(request: Request, household_id: str) -> AsyncIterator[str]:

@@ -89,12 +89,14 @@ class HouseholdRead(ORMModel):
     name: str
     timezone: str
     expiry_warning_days: int
+    shopping_check_mode: str
 
 
 class HouseholdUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     expiry_warning_days: int | None = Field(default=None, ge=0, le=365)
+    shopping_check_mode: str | None = Field(default=None, pattern="^(instant|finish_trip)$")
 
 
 class MemberRead(BaseModel):
@@ -133,6 +135,7 @@ class ProductCreate(BaseModel):
     brand: str | None = None
     category: str | None = None
     default_unit: str = "piece"
+    default_location_id: str | None = None
     image_url: str | None = None
     package_quantity: str | None = Field(default=None, max_length=80)
     notes: str | None = None
@@ -144,6 +147,7 @@ class ProductUpdate(BaseModel):
     brand: str | None = None
     category: str | None = None
     default_unit: str | None = None
+    default_location_id: str | None = None
     image_url: str | None = None
     package_quantity: str | None = Field(default=None, max_length=80)
     notes: str | None = None
@@ -157,6 +161,7 @@ class ProductRead(ORMModel):
     brand: str | None
     category: str | None
     default_unit: str
+    default_location_id: str | None
     image_url: str | None
     package_quantity: str | None
     notes: str | None
@@ -239,15 +244,70 @@ class MinStockRuleRead(ORMModel):
     active: bool
 
 
-class ShoppingListItem(BaseModel):
-    product_id: str
+class ShoppingItemCreate(BaseModel):
+    product_id: str | None = None
+    free_text: str | None = Field(default=None, min_length=1, max_length=240)
+    quantity: Quantity
+    unit: str = Field(min_length=1, max_length=20)
+    note: str | None = None
+    source: str = Field(default="manual", pattern="^(manual|voice|receipt|recipe)$")
+    idempotency_key: IdempotencyKey
+
+    @model_validator(mode="after")
+    def require_product_or_text(self) -> "ShoppingItemCreate":
+        if not self.product_id and not self.free_text:
+            raise ValueError("Produkt oder Freitext ist erforderlich")
+        return self
+
+
+class ShoppingItemRead(ORMModel):
+    id: str
+    product_id: str | None
     product_name: str
-    current_quantity: Decimal
-    minimum_quantity: Decimal
-    missing_quantity: Decimal
+    category: str | None
+    free_text: str | None
+    quantity: Decimal
     unit: str
-    source: str = "minimum_stock"
-    recipe_id: str | None = None
+    note: str | None
+    source: str
+    status: str
+    checked_by_name: str | None
+    checked_at: datetime | None
+    linked_movement_id: str | None
+    version: int
+    created_at: datetime
+
+
+class ShoppingCheckRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    idempotency_key: IdempotencyKey
+    product_id: str | None = None
+    location_id: str | None = None
+    best_before: date | None = None
+    book_to_stock: bool = True
+    client_info: str | None = None
+
+
+class ShoppingUndoRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    expected_batch_version: int = Field(ge=1)
+    idempotency_key: IdempotencyKey
+
+
+class ShoppingTripLine(BaseModel):
+    item_id: str
+    expected_version: int = Field(ge=1)
+    location_id: str | None = None
+    best_before: date | None = None
+    idempotency_key: IdempotencyKey
+
+
+class ShoppingFinishRequest(BaseModel):
+    lines: list[ShoppingTripLine] = Field(min_length=1)
+
+
+class ShoppingRemoveRequest(BaseModel):
+    expected_version: int = Field(ge=1)
 
 
 class RecipeIngredientWrite(BaseModel):
@@ -383,6 +443,11 @@ class MovementResult(BaseModel):
     movement: MovementRead
     batch: BatchRead
     replayed: bool = False
+
+
+class ShoppingCheckResult(BaseModel):
+    item: ShoppingItemRead
+    movement: MovementResult | None = None
 
 
 class LocationRead(ORMModel):

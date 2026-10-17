@@ -15,6 +15,7 @@ from .routers import (
     inventory_sessions,
     notifications,
     recipes,
+    shopping,
 )
 
 settings = get_settings()
@@ -46,6 +47,7 @@ app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(households.router, prefix="/api/v1")
 app.include_router(events.router, prefix="/api/v1")
 app.include_router(recipes.router, prefix="/api/v1")
+app.include_router(shopping.router, prefix="/api/v1")
 
 
 @app.get("/healthz", include_in_schema=False)

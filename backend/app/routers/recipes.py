@@ -15,7 +15,7 @@ from ..models import (
     Product,
     Recipe,
     RecipeIngredient,
-    ShoppingListEntry,
+    ShoppingListItem,
 )
 from ..schemas import (
     RecipeCreate,
@@ -248,19 +248,22 @@ def add_missing_to_shopping_list(
     )
     selected = next(item for item in recommendation if item.recipe.id == recipe.id)
     db.execute(
-        delete(ShoppingListEntry).where(
-            ShoppingListEntry.household_id == household_id,
-            ShoppingListEntry.recipe_id == recipe.id,
+        delete(ShoppingListItem).where(
+            ShoppingListItem.household_id == household_id,
+            ShoppingListItem.recipe_id == recipe.id,
+            ShoppingListItem.status == "open",
         )
     )
     db.add_all(
         [
-            ShoppingListEntry(
+            ShoppingListItem(
                 household_id=household_id,
                 product_id=item.product_id,
                 recipe_id=recipe.id,
                 quantity=item.missing_quantity,
                 unit=item.unit,
+                source="recipe",
+                created_by_id=context.user.id,
             )
             for item in selected.missing_ingredients
         ]

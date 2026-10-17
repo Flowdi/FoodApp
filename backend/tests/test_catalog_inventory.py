@@ -43,7 +43,8 @@ async def test_minimum_stock_generates_shopping_list(client, auth):
     assert response.status_code == 200
     shopping = (await client.get("/api/v1/shopping-list", headers=auth[0])).json()
     assert shopping[0]["product_name"] == "Milch"
-    assert shopping[0]["missing_quantity"] == "2.000"
+    assert shopping[0]["quantity"] == "2.000"
+    assert shopping[0]["source"] == "min_stock"
 
 
 async def test_minimum_stock_converts_mixed_units(client, auth):
@@ -65,7 +66,7 @@ async def test_minimum_stock_converts_mixed_units(client, auth):
         json={"minimum_quantity": 2, "unit": "l", "active": True},
     )
     shopping = (await client.get("/api/v1/shopping-list", headers=headers)).json()
-    assert shopping[0]["missing_quantity"] == "1.500"
+    assert shopping[0]["quantity"] == "1.500"
 
 
 async def test_inventory_confirmation_creates_adjustment(client, auth):
