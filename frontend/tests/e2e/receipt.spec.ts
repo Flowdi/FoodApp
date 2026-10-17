@@ -14,6 +14,7 @@ async function mockApi(page: Page) {
   await page.route('**/api/v1/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname
     const json = (value: unknown) => route.fulfill({ json: value })
+    if (path === '/api/v1/auth/bootstrap') return json({ memberships: [{ household_id: 'household-1', role: 'owner' }] })
     if (path === '/api/v1/stock' || path === '/api/v1/movements' || path === '/api/v1/shopping-list' || path === '/api/v1/notifications' || path === '/api/v1/households/members' || path === '/api/v1/recipes/recommendations') return json([])
     if (path === '/api/v1/products') return json([product])
     if (path === '/api/v1/locations') return json([{ id: 'location-1', name: 'Kühlschrank' }])

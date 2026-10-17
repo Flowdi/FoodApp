@@ -85,7 +85,7 @@ async def test_two_clients_cannot_consume_last_stock(client, auth):
 async def test_non_member_cannot_read(client, auth):
     alien = dict(auth[0])
     alien["X-Household-ID"] = "00000000-0000-0000-0000-000000000000"
-    assert (await client.get("/api/v1/products", headers=alien)).status_code == 403
+    assert (await client.get("/api/v1/products", headers=alien)).status_code == 404
 
 
 async def test_fefo_consumes_earliest_batches_and_replays(client, auth):

@@ -34,6 +34,33 @@ export class ApiError extends Error {
 const state = { token: localStorage.getItem('access_token') || '', refresh: localStorage.getItem('refresh_token') || '', household: localStorage.getItem('household_id') || '' }
 let refreshPromise: Promise<boolean> | null = null
 
+function errorMessage(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const missingHousehold = detail.some(item => Array.isArray(item?.loc) && item.loc.includes('x-household-id'))
+    if (missingHousehold) return 'Der Haushalt konnte nicht geladen werden. Bitte lade die Seite neu oder melde dich erneut an.'
+    return 'Die Anfrage ist unvollständig. Bitte prüfe deine Eingaben und versuche es erneut.'
+  }
+  if (detail && typeof detail === 'object' && 'message' in detail && typeof detail.message === 'string') return detail.message
+  return 'Aktion fehlgeschlagen'
+}
+
+async function ensureHousehold(): Promise<string> {
+  state.household = state.household.trim()
+  if (state.household) return state.household
+  const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
+  const memberships = boot.memberships || []
+  const selected = memberships.find(item => item.household_id === state.household) || memberships[0]
+  if (!selected) {
+    state.household = ''
+    localStorage.removeItem('household_id')
+    throw new ApiError('Für dieses Konto ist noch kein Haushalt eingerichtet.', 404)
+  }
+  state.household = selected.household_id
+  localStorage.setItem('household_id', state.household)
+  return state.household
+}
+
 async function renewAccessToken(): Promise<boolean> {
   if (!state.refresh) return false
   if (!refreshPromise) refreshPromise = fetch('/api/v1/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: state.refresh }) }).then(async response => {
@@ -52,13 +79,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 401 && path !== '/auth/refresh' && await renewAccessToken()) return request<T>(path, init)
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: 'Netzwerkfehler' }))
-    const detail = body.detail
-    const message = typeof detail === 'string'
-      ? detail
-      : Array.isArray(detail)
-        ? detail.map(item => item.msg).join('; ')
-        : detail?.message
-    throw new ApiError(message || 'Aktion fehlgeschlagen', response.status)
+    throw new ApiError(errorMessage(body.detail), response.status)
   }
   if (response.status === 204) return undefined as T
   return response.json()
@@ -73,8 +94,7 @@ async function upload<T>(path: string, body: FormData): Promise<T> {
   if (response.status === 401 && await renewAccessToken()) return upload<T>(path, body)
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: 'Netzwerkfehler' }))
-    const detail = payload.detail
-    throw new ApiError(typeof detail === 'string' ? detail : detail?.message || 'Aktion fehlgeschlagen', response.status)
+    throw new ApiError(errorMessage(payload.detail), response.status)
   }
   return response.json()
 }
@@ -130,17 +150,18 @@ async function streamEvents(onChange: () => void, signal: AbortSignal) {
 
 export const api = {
   authenticated: () => Boolean(state.token || state.refresh),
+  ensureHousehold,
   async login(email: string, password: string) {
     const tokens = await request<{ access_token: string; refresh_token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     state.token = tokens.access_token; state.refresh = tokens.refresh_token; localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh)
-    const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
-    state.household = boot.memberships[0].household_id; localStorage.setItem('household_id', state.household)
+    state.household = ''; localStorage.removeItem('household_id')
+    await ensureHousehold()
   },
   async register(email: string, display_name: string, password: string, household_name: string | null, invitation_token: string | null) {
     const tokens = await request<{ access_token: string; refresh_token: string }>('/auth/register', { method: 'POST', body: JSON.stringify({ email, display_name, password, household_name, invitation_token }) })
     state.token = tokens.access_token; state.refresh = tokens.refresh_token; localStorage.setItem('access_token', state.token); localStorage.setItem('refresh_token', state.refresh)
-    const boot = await request<{ memberships: { household_id: string }[] }>('/auth/bootstrap')
-    state.household = boot.memberships[0].household_id; localStorage.setItem('household_id', state.household)
+    state.household = ''; localStorage.removeItem('household_id')
+    await ensureHousehold()
   },
   async logout() { if (state.refresh) await request('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: state.refresh }) }).catch(() => undefined); localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); localStorage.removeItem('household_id'); state.token = ''; state.refresh = ''; state.household = '' },
   requestPasswordReset: (email: string) => request<{ message: string }>('/auth/password-reset/request', { method: 'POST', body: JSON.stringify({ email }) }),

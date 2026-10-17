@@ -201,6 +201,23 @@ alembic upgrade head
 uvicorn backend.app.main:app --reload
 ```
 
+Unter PowerShell kann die Migration ohne aktivierte virtuelle Umgebung direkt ausgeführt werden:
+
+```powershell
+.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+Für eine lokale Entwicklungsansicht mit 100 realistischen Artikeln zuerst den normalen Demo-Nutzer
+anlegen und anschließend den idempotenten erweiterten Seed ausführen:
+
+```powershell
+.venv\Scripts\python.exe -m backend.app.seed
+.venv\Scripts\python.exe -m backend.app.demo_seed --email demo@example.com
+```
+
+Mit `--household-id <UUID>` kann gezielt ein Haushalt dieses Benutzers gewählt werden. Der erweiterte
+Seed ist ausschließlich für die Entwicklung gedacht und wird nie automatisch beim Start ausgeführt.
+
 Frontend (Node 22+):
 
 ```bash

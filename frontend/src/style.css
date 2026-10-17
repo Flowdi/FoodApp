@@ -26,3 +26,24 @@ button{min-width:48px;min-height:48px}input:not([type="checkbox"]):not([type="ra
 @media(min-width:900px){.mobile-shopping{display:none}.shopping-desktop-table{display:table;width:100%;border-collapse:separate;border-spacing:0 8px}.shopping-desktop-table th{padding:0 10px;text-align:left;font-size:.72rem;color:#778078}.shopping-desktop-table th button{border:0;background:transparent;color:inherit;font-weight:800;padding:0}.shopping-desktop-table td{background:var(--paper);border-top:1px solid #e7e2d8;border-bottom:1px solid #e7e2d8;padding:10px}.shopping-desktop-table td:first-child{border-left:1px solid #e7e2d8;border-radius:12px 0 0 12px}.shopping-desktop-table td:last-child{border-right:1px solid #e7e2d8;border-radius:0 12px 12px 0}.shopping-desktop-table td small{display:block;color:#778078}.receipt-table-head{display:grid;grid-template-columns:90px 1fr 100px 100px;gap:8px;padding:0 12px}.receipt-table-head button{border:0;background:transparent;color:#778078;text-align:left;font-size:.72rem;font-weight:800}.receipt-line-title{grid-template-columns:32px minmax(0,1fr) 100px}.receipt-line-title b{text-align:right}}
 @media(max-width:560px){.shopping-trip-head{display:none}.shopping-trip-row{grid-template-columns:1fr}.shopping-trip-row strong{margin-bottom:2px}}
 @media(prefers-color-scheme:dark){.shopping-trip-row,.shopping-desktop-table td{border-color:#2a3931}.shopping-trip-row select,.shopping-trip-row input{border-color:#36463d}.voice-new-product{border-color:#36463d}}
+
+/* Shared interaction and navigation states. */
+.search svg{width:22px;height:22px;flex:0 0 22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;color:var(--leaf)}
+.nav-icon{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+nav button{position:relative;border-radius:12px;transition:background-color 150ms ease,color 150ms ease,transform 150ms ease,filter 150ms ease}
+nav button.active{color:var(--gold);background:color-mix(in srgb,var(--gold) 14%,transparent)}
+nav button.active::before{content:"";position:absolute;left:20%;right:20%;bottom:-7px;height:3px;border-radius:999px;background:var(--gold)}
+.secondary-action{border:1px solid #b7c9bb!important;border-radius:10px!important;background:#e4ebe5!important;color:var(--green)!important;font-weight:700!important;padding:8px 12px!important}
+.loading-state .spinner{display:block;width:30px;height:30px;margin:0 auto 16px;border:3px solid color-mix(in srgb,var(--leaf) 25%,transparent);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+.scan-actions button{color:var(--green);background:#e4ebe5;border-color:#9eb6a4;font-weight:700}
+.check-mode select{display:block;width:100%;margin-top:7px;background:var(--paper);color:inherit;border:1px solid #d9d5cb;border-radius:10px;padding:0 10px}
+button,a,[role="button"],summary,.receipt-file-button,.channel-options label,.receipt-upload{transition:background-color 150ms ease,color 150ms ease,border-color 150ms ease,box-shadow 150ms ease,filter 150ms ease,transform 150ms ease}
+button,a,[role="button"],summary,.receipt-file-button,.channel-options label{cursor:pointer}
+button:focus-visible,a:focus-visible,[role="button"]:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.receipt-file-button:focus-within,.channel-options label:has(input:focus-visible){outline:3px solid var(--gold);outline-offset:3px}
+button:not(:disabled):active,a:active,[role="button"]:active,.receipt-file-button:active,.channel-options label:active{transform:translateY(1px) scale(.99)}
+button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allowed!important;opacity:.5;filter:none!important;transform:none!important}
+@media(hover:hover){button:not(:disabled):hover,a:hover,[role="button"]:hover,summary:hover,.receipt-file-button:hover,.channel-options label:hover{filter:brightness(.94)}nav button:not(:disabled):hover{background:color-mix(in srgb,var(--gold) 10%,transparent);filter:none}.receipt-upload:hover{border-color:var(--gold);background:color-mix(in srgb,var(--gold) 7%,transparent)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(min-width:1024px){nav button.active::before{left:-7px;right:auto;top:18%;bottom:18%;width:3px;height:auto}.app-shell nav{border-right-color:#2a3931;align-content:start;padding-top:110px}}
+@media(prefers-color-scheme:dark){.search{background:#111914;border-color:#36463d}.search::after{content:none}.scan-actions button,.secondary-action{background:#294337!important;color:#edf1ec!important;border-color:#486655!important}.check-mode select{border-color:#36463d}.app-shell nav{border-color:#2a3931}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}

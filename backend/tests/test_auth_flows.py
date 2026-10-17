@@ -4,7 +4,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from backend.app.models import PasswordResetToken, User
+from backend.app.models import Membership, PasswordResetToken, User
 from backend.app.security import hash_token
 
 
@@ -20,6 +20,50 @@ async def register(client: httpx.AsyncClient, email: str) -> dict[str, str]:
     )
     assert response.status_code == 201
     return response.json()
+
+
+@pytest.mark.asyncio
+async def test_household_context_uses_first_membership_without_header(client, auth) -> None:
+    authorization = {"Authorization": auth[0]["Authorization"]}
+
+    missing = await client.get("/api/v1/households/current", headers=authorization)
+    empty = await client.get(
+        "/api/v1/households/current",
+        headers={**authorization, "X-Household-ID": ""},
+    )
+
+    assert missing.status_code == 200
+    assert empty.status_code == 200
+    assert missing.json()["id"] == auth[0]["X-Household-ID"]
+    assert empty.json()["id"] == auth[0]["X-Household-ID"]
+
+
+@pytest.mark.asyncio
+async def test_household_context_returns_structured_errors(client, auth) -> None:
+    unknown = await client.get(
+        "/api/v1/households/current",
+        headers={
+            "Authorization": auth[0]["Authorization"],
+            "X-Household-ID": "00000000-0000-0000-0000-000000000000",
+        },
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "household_not_found"
+
+    tokens = await register(client, "without-household@example.com")
+    with client.session_factory() as db:
+        membership = db.scalar(
+            select(Membership).join(User).where(User.email == "without-household@example.com")
+        )
+        assert membership is not None
+        db.delete(membership)
+        db.commit()
+    no_household = await client.get(
+        "/api/v1/households/current",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert no_household.status_code == 404
+    assert no_household.json()["detail"]["code"] == "no_household"
 
 
 @pytest.mark.asyncio
@@ -202,4 +246,4 @@ async def test_invited_user_can_register_directly(client: httpx.AsyncClient, aut
         "Authorization": f"Bearer {access_token}",
         "X-Household-ID": owner_headers["X-Household-ID"],
     }
-    assert (await client.get("/api/v1/products", headers=former_member_headers)).status_code == 403
+    assert (await client.get("/api/v1/products", headers=former_member_headers)).status_code == 404
