@@ -1,8 +1,9 @@
+import importlib
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import Integer, create_engine, inspect
 
 from backend.app.config import get_settings
 
@@ -25,7 +26,22 @@ def test_migrations_create_current_membership_schema(tmp_path, monkeypatch) -> N
         )
     }
     assert {"notification_channels", "recipe_preferences", "voice_preferences"} <= columns
+    inspector = inspect(create_engine(f"sqlite:///{database_path}"))
+    stock_columns = {column["name"]: column for column in inspector.get_columns("stock_batches")}
+    assert isinstance(stock_columns["quantity"]["type"], Integer)
+    assert any(
+        set(constraint["column_names"]) == {"household_id", "product_id"}
+        for constraint in inspector.get_unique_constraints("stock_batches")
+    )
     get_settings.cache_clear()
+
+
+def test_package_migration_rounds_up_and_uses_one_for_unknown_size() -> None:
+    migration = importlib.import_module("backend.alembic.versions.0016_package_inventory")
+
+    assert migration._packages("750", "g", "500 g", fallback_one=True) == 2
+    assert migration._packages("0.75", "l", "500 ml", fallback_one=True) == 2
+    assert migration._packages("900", "g", None, fallback_one=True) == 1
 
 
 def test_repair_migration_adds_preferences_to_incomplete_database(tmp_path, monkeypatch) -> None:

@@ -37,7 +37,7 @@ def test_demo_seed_creates_realistic_idempotent_dataset(client, auth) -> None:
     assert first["created"] == 1
     assert second == {"products": 100, "created": 0}
     assert len(products) == 100
-    assert batch_count == 113
-    assert movement_count == 125
+    assert batch_count == 100
+    assert movement_count == 112
     assert shopping_count == 10
     assert barcodes == {ean13(index) for index in range(1, 101)}

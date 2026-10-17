@@ -20,7 +20,6 @@ from ..models import (
     StockBatch,
     User,
 )
-from ..units import sum_converted
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +131,7 @@ def evaluate_household(db: Session, household: Household) -> int:
                 StockBatch.quantity > 0,
             )
         )
-        current_quantity = sum_converted(
-            ((batch.quantity, batch.unit) for batch in batches), rule.unit
-        )
+        current_quantity = sum(batch.quantity for batch in batches)
         dedupe_key = f"low-stock:{rule.id}"
         existing = db.scalar(select(Notification).where(Notification.dedupe_key == dedupe_key))
         if current_quantity < rule.minimum_quantity and existing is None:
@@ -145,7 +142,7 @@ def evaluate_household(db: Session, household: Household) -> int:
                 dedupe_key=dedupe_key,
                 message=(
                     f"{product.name if product else 'Produkt'}: Bestand {current_quantity} "
-                    f"{rule.unit}, Mindestbestand {rule.minimum_quantity} {rule.unit}"
+                    f"Packungen, Mindestbestand {rule.minimum_quantity} Packungen"
                 ),
             ):
                 created += 1

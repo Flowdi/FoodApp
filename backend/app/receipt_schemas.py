@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .schemas import IdempotencyKey, Quantity
+from .schemas import IdempotencyKey, PackageQuantity, Quantity
 
 
 class ExtractedReceiptLine(BaseModel):
@@ -88,8 +88,8 @@ class ReceiptConfirmLine(BaseModel):
     line_id: str
     expected_version: int = Field(ge=1)
     product_id: str
-    quantity: Quantity
-    unit: str = Field(min_length=1, max_length=20)
+    quantity: PackageQuantity
+    unit: str = "package"
     location_id: str | None = None
     best_before: date | None = None
     idempotency_key: IdempotencyKey

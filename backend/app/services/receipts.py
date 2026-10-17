@@ -278,7 +278,7 @@ def _recent_shopping_quantity(
             ShoppingListItem.checked_at >= since,
         )
     )
-    return sum((item.quantity for item in items), Decimal("0"))
+    return sum((Decimal(item.quantity) for item in items), Decimal("0"))
 
 
 def apply_extraction(

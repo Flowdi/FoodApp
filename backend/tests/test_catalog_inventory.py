@@ -12,7 +12,7 @@ async def purchase(client, auth):
             "product_id": product["id"],
             "location_id": location["id"],
             "quantity": 1,
-            "unit": "l",
+            "unit": "package",
             "idempotency_key": "77777777-7777-4777-8777-777777777777",
         },
     )
@@ -38,16 +38,16 @@ async def test_minimum_stock_generates_shopping_list(client, auth):
     response = await client.put(
         f"/api/v1/products/{product['id']}/min-stock",
         headers=auth[0],
-        json={"minimum_quantity": 2, "unit": "l", "active": True},
+        json={"minimum_quantity": 2, "unit": "package", "active": True},
     )
     assert response.status_code == 200
     shopping = (await client.get("/api/v1/shopping-list", headers=auth[0])).json()
     assert shopping[0]["product_name"] == "Milch"
-    assert shopping[0]["quantity"] == "2.000"
+    assert shopping[0]["quantity"] == 2
     assert shopping[0]["source"] == "min_stock"
 
 
-async def test_minimum_stock_converts_mixed_units(client, auth):
+async def test_minimum_stock_uses_package_counts(client, auth):
     headers, location, product = auth
     await client.post(
         "/api/v1/stock/purchase",
@@ -55,24 +55,24 @@ async def test_minimum_stock_converts_mixed_units(client, auth):
         json={
             "product_id": product["id"],
             "location_id": location["id"],
-            "quantity": 500,
-            "unit": "ml",
+            "quantity": 1,
+            "unit": "package",
             "idempotency_key": "12121212-1212-4121-8121-121212121212",
         },
     )
     await client.put(
         f"/api/v1/products/{product['id']}/min-stock",
         headers=headers,
-        json={"minimum_quantity": 2, "unit": "l", "active": True},
+        json={"minimum_quantity": 2, "unit": "package", "active": True},
     )
     shopping = (await client.get("/api/v1/shopping-list", headers=headers)).json()
-    assert shopping[0]["quantity"] == "1.500"
+    assert shopping[0]["quantity"] == 1
 
 
 async def test_inventory_confirmation_creates_adjustment(client, auth):
     batch = (await purchase(client, auth)).json()["batch"]
     inventory = (await client.post("/api/v1/inventory-sessions", headers=auth[0], json={})).json()
-    assert inventory["counts"][0]["expected_quantity"] == "1.000"
+    assert inventory["counts"][0]["expected_quantity"] == 1
     await client.put(
         f"/api/v1/inventory-sessions/{inventory['session']['id']}/counts",
         headers=auth[0],
@@ -109,7 +109,7 @@ async def test_inventory_confirmation_rejects_changed_batch_atomically(client, a
         f"/api/v1/stock/{batch['id']}/consume",
         headers=auth[0],
         json={
-            "quantity": 0.25,
+            "quantity": 1,
             "expected_version": batch["version"],
             "idempotency_key": "13131313-1313-4131-8131-131313131313",
         },
@@ -123,7 +123,7 @@ async def test_inventory_confirmation_rejects_changed_batch_atomically(client, a
     assert confirmed.status_code == 409
     assert confirmed.json()["detail"]["code"] == "inventory_conflict"
     stock = (await client.get("/api/v1/stock", headers=auth[0])).json()
-    assert stock[0]["quantity"] == "0.750"
+    assert stock == []
 
 
 async def test_empty_inventory_confirmation_is_idempotent(client, auth):
@@ -180,7 +180,7 @@ async def test_history_csv_contains_product(client, auth):
     assert "Milch" in response.content.decode("utf-8-sig")
 
 
-async def test_transfer_creates_balanced_movements(client, auth):
+async def test_transfer_moves_the_single_product_row(client, auth):
     batch = (await purchase(client, auth)).json()["batch"]
     locations = (await client.get("/api/v1/locations", headers=auth[0])).json()
     target = next(item for item in locations if item["id"] != batch["location_id"])
@@ -190,21 +190,22 @@ async def test_transfer_creates_balanced_movements(client, auth):
         json={
             "batch_id": batch["id"],
             "target_location_id": target["id"],
-            "quantity": 0.4,
+            "quantity": 1,
             "expected_version": batch["version"],
             "idempotency_key": "88888888-8888-4888-8888-888888888888",
         },
     )
     assert response.status_code == 200
-    deltas = sorted(float(item["movement"]["quantity_delta"]) for item in response.json())
-    assert deltas == [-0.4, 0.4]
+    assert len(response.json()) == 1
+    assert float(response.json()[0]["movement"]["quantity_delta"]) == 0
+    assert response.json()[0]["batch"]["location_id"] == target["id"]
     replay = await client.post(
         "/api/v1/stock/transfer",
         headers=auth[0],
         json={
             "batch_id": batch["id"],
             "target_location_id": target["id"],
-            "quantity": 0.4,
+            "quantity": 1,
             "expected_version": batch["version"],
             "idempotency_key": "88888888-8888-4888-8888-888888888888",
         },

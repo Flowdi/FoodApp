@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -245,6 +246,7 @@ class ProductLookupCache(Base):
 
 class StockBatch(Base):
     __tablename__ = "stock_batches"
+    __table_args__ = (UniqueConstraint("household_id", "product_id"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     household_id: Mapped[str] = mapped_column(
         ForeignKey("households.id", ondelete="CASCADE"), index=True
@@ -255,8 +257,8 @@ class StockBatch(Base):
     location_id: Mapped[str] = mapped_column(
         ForeignKey("storage_locations.id", ondelete="RESTRICT"), index=True
     )
-    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0)
-    unit: Mapped[str] = mapped_column(String(20))
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    unit: Mapped[str] = mapped_column(String(20), default="package")
     best_before: Mapped[date | None] = mapped_column(Date)
     opened_at: Mapped[date | None] = mapped_column(Date)
     version: Mapped[int] = mapped_column(default=1, nullable=False)
@@ -295,8 +297,8 @@ class MinStockRule(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     household_id: Mapped[str] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
     product_id: Mapped[str] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
-    minimum_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
-    unit: Mapped[str] = mapped_column(String(20))
+    minimum_quantity: Mapped[int] = mapped_column(Integer)
+    unit: Mapped[str] = mapped_column(String(20), default="package")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
@@ -365,9 +367,9 @@ class InventoryCount(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     session_id: Mapped[str] = mapped_column(ForeignKey("inventory_sessions.id", ondelete="CASCADE"))
     batch_id: Mapped[str] = mapped_column(ForeignKey("stock_batches.id"))
-    expected_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    expected_quantity: Mapped[int] = mapped_column(Integer)
     expected_version: Mapped[int] = mapped_column(default=1, nullable=False)
-    counted_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    counted_quantity: Mapped[int] = mapped_column(Integer)
 
 
 class Notification(Base):
@@ -449,8 +451,8 @@ class ShoppingListItem(Base):
         ForeignKey("products.id", ondelete="SET NULL"), index=True
     )
     free_text: Mapped[str | None] = mapped_column(String(240))
-    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
-    unit: Mapped[str] = mapped_column(String(20))
+    quantity: Mapped[int] = mapped_column(Integer)
+    unit: Mapped[str] = mapped_column(String(20), default="package")
     note: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(20), default="manual")
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)

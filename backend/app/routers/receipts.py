@@ -382,7 +382,7 @@ def confirm_receipt(
             household_id=household_id,
             product=product,
             quantity=requested.quantity,
-            unit=requested.unit,
+            unit="package",
             location_id=requested.location_id,
             best_before=requested.best_before,
             user_id=context.user.id,
@@ -391,8 +391,8 @@ def confirm_receipt(
             note=f"Kassenbon {receipt.id}",
         )
         line.product_id = product.id
-        line.quantity = requested.quantity
-        line.unit = requested.unit
+        line.quantity = Decimal(requested.quantity)
+        line.unit = "package"
         line.location_id = movement.batch.location_id
         line.best_before = requested.best_before
         line.movement_id = movement.movement.id

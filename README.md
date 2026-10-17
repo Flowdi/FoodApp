@@ -10,7 +10,7 @@ Enthalten sind:
 - Login-Rate-Limit, serverseitiger Logout und einmalige Passwort-Reset-Links per SMTP
 - Haushaltseinladungen für `admin`, `member` und `viewer`, optional an eine feste E-Mail gebunden
 - Haushalts-, Mitglieder- und Rollenverwaltung (`owner`, `admin`, `member`, `viewer`) mit mandantensicherer API
-- Produkte mit mehreren Barcodes, Lagerorte und Chargen
+- Produkte mit mehreren Barcodes, Lagerorten und genau einer kompakten Bestandsposition je Produkt
 - transaktionales Buchungsjournal für Einkauf, Entnahme, Entsorgung und Storno
 - Idempotency-Key je Schreibvorgang, pessimistische Zeilensperre plus Optimistic Locking (`version`)
 - Browser-Barcode-Scan (EAN/UPC via ZXing) zum Einbuchen, Entnehmen, Entsorgen und Zählen, manueller Fallback und haushaltsbezogen gecachter Open-Food-Facts-Lookup inklusive Packungsgröße und Produktbild
@@ -18,12 +18,12 @@ Enthalten sind:
 - Android-Sprachstart, direkte Sprachroute und Launcher-Kurzbefehle für Sprache, Einkaufsliste, Kassenbon und Bestand
 - vollständige IndexedDB-Outbox mit automatischem Reconnect-Versand und Konfliktcenter
 - geräteübergreifende Live-Aktualisierung über authentifizierte Server-Sent Events mit Polling-Fallback
-- automatische FEFO-Entnahme und -Entsorgung über mehrere Chargen in einer DB-Transaktion
-- Produkt- und Chargenbearbeitung mit serverseitiger Rollenprüfung und Audit-Log
+- Entnahme und Entsorgung in ganzen Packungen mit optimistischer Sperre in einer DB-Transaktion
+- Produkt- und Bestandsbearbeitung mit serverseitiger Rollenprüfung und Audit-Log
 - Umlagerungen als zwei ausgeglichene, idempotente Journalbuchungen
 - atomare, versionsgesicherte Inventur für Haushalt oder Lagerort mit Soll/Ist-Abgleich und `adjust`-Buchungen
 - filterbarer Buchungsverlauf inklusive Nutzer/Gerät und Excel-kompatibler UTF-8-CSV-Export
-- einheitenübergreifende Mindestbestände, automatisch abgeleitete Einkaufsliste und entprellte Warnungen
+- Mindestbestände in Packungen, automatisch abgeleitete Einkaufsliste und entprellte Warnungen
 - persistente, live synchronisierte Einkaufsliste mit Freitext, Produkt-Autovervollständigung,
   Kategorien, Teilen und kollisionssicherem Abhaken
 - wahlweise sofortige Einbuchung beim Abhaken oder gemeinsamer, atomarer Einkaufsabschluss;
@@ -170,7 +170,7 @@ Vue-PWA ── HTTPS/REST + SSE ── Caddy ── FastAPI ── SQLAlchemy �
 
 Das Frontend nutzt Vue 3 + Vite, weil Komponenten, TypeScript und ein robuster Service Worker bei überschaubarer Bundle-Größe zusammenkommen. Gegenüber HTMX ist die lokale Offline-Outbox und Kamera-Lebenszyklusverwaltung klarer gekapselt. Die REST-API bleibt unabhängig vom Frontend nutzbar und ist unter `/docs` dokumentiert.
 
-Eine Buchung sperrt die Charge in PostgreSQL mit `SELECT … FOR UPDATE`, prüft deren Version und aktualisiert Bestand und Journal in derselben Transaktion. Ein innerhalb eines Haushalts eindeutiger Idempotency-Key macht Wiederholungen sicher. FEFO-Anfragen sperren alle betroffenen Chargen und buchen vom frühesten MHD aufwärts. Stornos sind Gegenbuchungen; die Ursprungsbuchung bleibt erhalten.
+Eine Buchung sperrt die Bestandsposition in PostgreSQL mit `SELECT … FOR UPDATE`, prüft deren Version und aktualisiert Bestand und Journal in derselben Transaktion. Ein innerhalb eines Haushalts eindeutiger Idempotency-Key macht Wiederholungen sicher. Bestands-, Mindestbestands- und Einkaufslistenmengen sind ganze Packungen; die optionale Packungsgröße bleibt reine Produktinformation. Stornos sind Gegenbuchungen; die Ursprungsbuchung bleibt erhalten.
 
 Offline erfasste Bestandsaktionen behalten ihren UUID-Key in IndexedDB. Beim Reconnect werden sie automatisch übertragen. Fachliche Konflikte werden nicht verworfen, sondern im Bereich **Mehr → Offline-Synchronisation** zur erneuten Prüfung oder zum bewussten Verwerfen angezeigt.
 

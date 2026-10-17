@@ -279,7 +279,7 @@ def seed_demo(db: Session, *, email: str, household_id: str | None = None) -> di
                 name=name,
                 brand=("Hausmarke", "Regional", "Bio Auswahl", "Vorrat Gut")[index % 4],
                 category=category,
-                default_unit=unit,
+                default_unit="package",
                 default_location_id=locations[location_name].id,
                 package_quantity=f"{initial_quantity(unit, index)} {unit}",
                 notes=DEMO_MARKER,
@@ -293,45 +293,35 @@ def seed_demo(db: Session, *, email: str, household_id: str | None = None) -> di
 
     batches: list[StockBatch] = []
     for index, product in enumerate(products):
-        batch_count = 2 if index % 8 == 0 else 1
-        for part in range(batch_count):
-            quantity = initial_quantity(product.default_unit, index) / batch_count
-            batch = StockBatch(
-                household_id=membership.household_id,
-                product_id=product.id,
-                location_id=product.default_location_id,
-                quantity=Decimal("0"),
-                unit=product.default_unit,
-                best_before=best_before(index + part * 9, product.category or ""),
-            )
-            db.add(batch)
-            db.flush()
-            apply_delta(
-                db,
-                household_id=membership.household_id,
-                batch_id=batch.id,
-                user_id=membership.user_id,
-                movement_type=MovementType.purchase,
-                delta=quantity,
-                expected_version=1,
-                idempotency_key=str(
-                    uuid.uuid5(DEMO_NAMESPACE, f"purchase:{membership.household_id}:{index}:{part}")
-                ),
-                note="Demo-Bestand eingebucht",
-                client_info="demo-seed",
-                commit=False,
-            )
-            batches.append(batch)
+        batch = StockBatch(
+            household_id=membership.household_id,
+            product_id=product.id,
+            location_id=product.default_location_id,
+            quantity=0,
+            unit="package",
+            best_before=best_before(index, product.category or ""),
+        )
+        db.add(batch)
+        db.flush()
+        apply_delta(
+            db,
+            household_id=membership.household_id,
+            batch_id=batch.id,
+            user_id=membership.user_id,
+            movement_type=MovementType.purchase,
+            delta=1 + index % 12,
+            expected_version=1,
+            idempotency_key=str(
+                uuid.uuid5(DEMO_NAMESPACE, f"purchase:{membership.household_id}:{index}")
+            ),
+            note="Demo-Bestand eingebucht",
+            client_info="demo-seed",
+            commit=False,
+        )
+        batches.append(batch)
 
     for index, batch in enumerate(batches[:12]):
-        amount = min(
-            batch.quantity / 4,
-            Decimal("50")
-            if batch.unit in {"g", "ml"}
-            else Decimal("0.25")
-            if batch.unit in {"kg", "l"}
-            else Decimal("1"),
-        )
+        amount = 1
         apply_delta(
             db,
             household_id=membership.household_id,
@@ -348,14 +338,14 @@ def seed_demo(db: Session, *, email: str, household_id: str | None = None) -> di
             commit=False,
         )
 
-    for index, product in enumerate(products[:5]):
+    for product in products[:5]:
         available = sum(batch.quantity for batch in batches if batch.product_id == product.id)
         db.add(
             MinStockRule(
                 household_id=membership.household_id,
                 product_id=product.id,
-                minimum_quantity=available + initial_quantity(product.default_unit, index),
-                unit=product.default_unit,
+                minimum_quantity=available + 2,
+                unit="package",
             )
         )
 
@@ -366,10 +356,8 @@ def seed_demo(db: Session, *, email: str, household_id: str | None = None) -> di
             ShoppingListItem(
                 household_id=membership.household_id,
                 product_id=product.id,
-                quantity=Decimal("1")
-                if product.default_unit not in {"g", "ml"}
-                else Decimal("500"),
-                unit=product.default_unit,
+                quantity=1,
+                unit="package",
                 note=DEMO_MARKER,
                 source="manual",
                 status="checked" if checked else "open",

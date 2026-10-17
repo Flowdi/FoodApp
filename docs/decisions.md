@@ -1,5 +1,16 @@
 # Architekturentscheidungen
 
+## Packungsbasierter Bestand
+
+- Bestands-, Inventur-, Mindestbestands- und Einkaufslistenzahlen sind ganze Packungen.
+- Pro Haushalt und Produkt existiert genau eine Bestandsposition. Kategorie und Packungsgröße sind
+  Metadaten und werden nicht zur laufenden Mengenberechnung verwendet.
+- Migration `0016` rundet bekannte Altbestände anhand der Packungsgröße auf, setzt unbekannte
+  Chargen auf eine Packung und führt mehrere Produktchargen zusammen. Das Bewegungsjournal bleibt
+  unverändert; nur seine Fremdschlüssel werden auf die zusammengeführte Position umgebogen.
+- Umlagern verschiebt deshalb immer die vollständige Produktposition und schreibt eine neutrale
+  Transferbewegung. Teilbestände an mehreren Lagerorten sind im neuen Modell nicht vorgesehen.
+
 ## E1 – Persistente Einkaufsliste
 
 - `shopping_list_items` ist die einzige persistente Quelle für manuelle, Mindestbestands- und

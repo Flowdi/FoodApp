@@ -12,7 +12,7 @@ async def create_item(client, auth, key="21212121-2121-4121-8121-212121212121"):
         json={
             "product_id": auth[2]["id"],
             "quantity": 2,
-            "unit": "l",
+            "unit": "package",
             "note": "Für das Wochenende",
             "source": "manual",
             "idempotency_key": key,
@@ -89,7 +89,7 @@ async def test_minimum_item_is_added_and_removed_after_restock(client, auth):
     await client.put(
         f"/api/v1/products/{auth[2]['id']}/min-stock",
         headers=auth[0],
-        json={"minimum_quantity": 2, "unit": "l", "active": True},
+        json={"minimum_quantity": 2, "unit": "package", "active": True},
     )
     first = (await client.get("/api/v1/shopping-list", headers=auth[0])).json()
     assert len(first) == 1
@@ -101,7 +101,7 @@ async def test_minimum_item_is_added_and_removed_after_restock(client, auth):
             "product_id": auth[2]["id"],
             "location_id": auth[1]["id"],
             "quantity": 2,
-            "unit": "l",
+            "unit": "package",
             "idempotency_key": "25252525-2525-4252-8252-252525252525",
         },
     )
@@ -160,7 +160,7 @@ async def test_free_text_can_be_assigned_before_finish_trip(client, auth):
         json={
             "free_text": "Milch vom Markt",
             "quantity": 1,
-            "unit": "l",
+            "unit": "package",
             "source": "manual",
             "idempotency_key": "28282828-2828-4282-8282-282828282828",
         },
@@ -177,6 +177,39 @@ async def test_free_text_can_be_assigned_before_finish_trip(client, auth):
     assert checked.status_code == 200
     assert checked.json()["item"]["product_id"] == auth[2]["id"]
     assert checked.json()["item"]["product_name"] == auth[2]["name"]
+
+
+async def test_checked_item_without_stock_booking_can_be_toggled_open(client, auth):
+    await client.patch(
+        "/api/v1/households/current",
+        headers=auth[0],
+        json={"shopping_check_mode": "finish_trip"},
+    )
+    item = (await create_item(client, auth)).json()
+    checked = (
+        await client.post(
+            f"/api/v1/shopping-list/{item['id']}/check",
+            headers=auth[0],
+            json={
+                "expected_version": item["version"],
+                "idempotency_key": "30303030-3030-4030-8030-303030303030",
+                "book_to_stock": False,
+            },
+        )
+    ).json()["item"]
+
+    reopened = await client.post(
+        f"/api/v1/shopping-list/{item['id']}/undo",
+        headers=auth[0],
+        json={
+            "expected_version": checked["version"],
+            "idempotency_key": "31313131-3131-4131-8131-313131313131",
+        },
+    )
+
+    assert reopened.status_code == 200
+    assert reopened.json()["item"]["status"] == "open"
+    assert reopened.json()["movement"] is None
 
 
 async def test_viewer_cannot_change_shopping_list(client, auth):

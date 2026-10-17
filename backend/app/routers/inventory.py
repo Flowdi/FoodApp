@@ -1,7 +1,6 @@
 import csv
 import io
 from datetime import datetime
-from decimal import Decimal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -42,6 +41,7 @@ from ..services.stock import (
     apply_delta,
     consume_fefo,
     existing_result,
+    load_or_create_product_stock,
     reverse_movement,
     transfer_stock,
 )
@@ -94,7 +94,9 @@ def create_product(
         if location is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Lagerort nicht gefunden")
     product = Product(
-        household_id=context.membership.household_id, **payload.model_dump(exclude={"barcodes"})
+        household_id=context.membership.household_id,
+        **payload.model_dump(exclude={"barcodes", "default_unit"}),
+        default_unit="package",
     )
     product.barcodes = [ProductBarcode(barcode=value) for value in payload.barcodes]
     db.add(product)
@@ -210,16 +212,13 @@ def purchase(
     )
     if not product or not location:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Produkt oder Lagerort nicht gefunden")
-    batch = StockBatch(
+    batch = load_or_create_product_stock(
+        db,
         household_id=context.membership.household_id,
         product_id=product.id,
         location_id=location.id,
-        quantity=Decimal("0"),
-        unit=payload.unit,
         best_before=payload.best_before,
     )
-    db.add(batch)
-    db.flush()
     return apply_delta(
         db,
         household_id=context.membership.household_id,
@@ -227,7 +226,7 @@ def purchase(
         user_id=context.user.id,
         movement_type=MovementType.purchase,
         delta=payload.quantity,
-        expected_version=1,
+        expected_version=batch.version,
         idempotency_key=payload.idempotency_key,
         client_info=payload.client_info,
     )

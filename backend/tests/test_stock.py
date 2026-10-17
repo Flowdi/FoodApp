@@ -16,7 +16,7 @@ async def purchase(
             "product_id": product["id"],
             "location_id": location["id"],
             "quantity": 1,
-            "unit": "l",
+            "unit": "package",
             "idempotency_key": key,
         },
     )
@@ -82,13 +82,40 @@ async def test_two_clients_cannot_consume_last_stock(client, auth):
     assert sorted(response.status_code for response in responses) == [200, 409]
 
 
+async def test_two_first_purchases_create_one_product_row(client, auth):
+    headers, location, product = auth
+
+    async def add_package(key: str) -> httpx.Response:
+        return await client.post(
+            "/api/v1/stock/purchase",
+            headers=headers,
+            json={
+                "product_id": product["id"],
+                "location_id": location["id"],
+                "quantity": 1,
+                "unit": "package",
+                "idempotency_key": key,
+            },
+        )
+
+    responses = await asyncio.gather(
+        add_package("46464646-4646-4646-8646-464646464646"),
+        add_package("47474747-4747-4747-8747-474747474747"),
+    )
+
+    assert [response.status_code for response in responses] == [201, 201]
+    stock = (await client.get("/api/v1/stock", headers=headers)).json()
+    assert len(stock) == 1
+    assert stock[0]["quantity"] == 2
+
+
 async def test_non_member_cannot_read(client, auth):
     alien = dict(auth[0])
     alien["X-Household-ID"] = "00000000-0000-0000-0000-000000000000"
     assert (await client.get("/api/v1/products", headers=alien)).status_code == 404
 
 
-async def test_fefo_consumes_earliest_batches_and_replays(client, auth):
+async def test_repeated_purchases_share_one_product_row_and_replay(client, auth):
     headers, location, product = auth
 
     async def dated_purchase(key: str, quantity: float, best_before: str):
@@ -99,7 +126,7 @@ async def test_fefo_consumes_earliest_batches_and_replays(client, auth):
                 "product_id": product["id"],
                 "location_id": location["id"],
                 "quantity": quantity,
-                "unit": "l",
+                "unit": "package",
                 "best_before": best_before,
                 "idempotency_key": key,
             },
@@ -109,20 +136,20 @@ async def test_fefo_consumes_earliest_batches_and_replays(client, auth):
 
     later = await dated_purchase("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 2, "2027-02-01")
     earlier = await dated_purchase("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", 1, "2027-01-01")
+    assert later["id"] == earlier["id"]
+    assert earlier["quantity"] == 3
+    assert earlier["best_before"] == "2027-01-01"
     payload = {
         "product_id": product["id"],
         "quantity": 2,
-        "unit": "l",
-        "expected_versions": {
-            earlier["id"]: earlier["version"],
-            later["id"]: later["version"],
-        },
+        "unit": "package",
+        "expected_versions": {earlier["id"]: earlier["version"]},
         "idempotency_key": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
     }
     first = await client.post("/api/v1/stock/consume-fefo", headers=headers, json=payload)
     assert first.status_code == 200
-    assert [item["batch"]["id"] for item in first.json()] == [earlier["id"], later["id"]]
-    assert [item["movement"]["quantity_delta"] for item in first.json()] == ["-1.000", "-1.000"]
+    assert [item["batch"]["id"] for item in first.json()] == [earlier["id"]]
+    assert [item["movement"]["quantity_delta"] for item in first.json()] == ["-2.000"]
 
     replay = await client.post("/api/v1/stock/consume-fefo", headers=headers, json=payload)
     assert replay.status_code == 200
@@ -140,7 +167,7 @@ async def test_fefo_rejects_stale_batch_version(client, auth):
         json={
             "product_id": auth[2]["id"],
             "quantity": 1,
-            "unit": "l",
+            "unit": "package",
             "expected_versions": {batch["id"]: batch["version"] + 1},
             "idempotency_key": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         },
@@ -157,7 +184,7 @@ async def test_fefo_discard_uses_discard_movements(client, auth):
         json={
             "product_id": auth[2]["id"],
             "quantity": 1,
-            "unit": "l",
+            "unit": "package",
             "expected_versions": {batch["id"]: batch["version"]},
             "idempotency_key": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
         },

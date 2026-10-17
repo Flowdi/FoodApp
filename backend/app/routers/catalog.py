@@ -55,7 +55,7 @@ def update_product(
 ) -> Product:
     product = load_product(db, context.membership.household_id, product_id)
     changes: dict[str, object] = {}
-    values = payload.model_dump(exclude_unset=True, exclude={"barcodes"})
+    values = payload.model_dump(exclude_unset=True, exclude={"barcodes", "default_unit"})
     if values.get("default_location_id"):
         location = db.scalar(
             select(StorageLocation).where(
@@ -118,7 +118,7 @@ def update_batch(
                 },
             },
         )
-    values = payload.model_dump(exclude_unset=True, exclude={"expected_version"})
+    values = payload.model_dump(exclude_unset=True, exclude={"expected_version", "unit"})
     if "location_id" in values:
         location = db.scalar(
             select(StorageLocation).where(
@@ -168,12 +168,14 @@ def set_min_stock(
         rule = MinStockRule(
             household_id=context.membership.household_id,
             product_id=product_id,
-            **payload.model_dump(),
+            minimum_quantity=payload.minimum_quantity,
+            unit="package",
+            active=payload.active,
         )
         db.add(rule)
     else:
         rule.minimum_quantity = payload.minimum_quantity
-        rule.unit = payload.unit
+        rule.unit = "package"
         rule.active = payload.active
     db.commit()
     db.refresh(rule)
